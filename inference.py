@@ -1,7 +1,8 @@
 import torch
 from transformers import Wav2Vec2BertForSequenceClassification, AutoFeatureExtractor
 
-MODEL_PATH = "model-v1"
+# MODEL_PATH = "model-v1"
+MODEL_PATH = "pipecat-ai/smart-turn"
 
 # Load model and processor
 model = Wav2Vec2BertForSequenceClassification.from_pretrained(MODEL_PATH)
