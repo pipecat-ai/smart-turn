@@ -2,6 +2,8 @@
 
 This is an open source, community-driven, native audio turn detection model.
 
+HuggingFace page: [pipecat-ai/smart-turn](https://huggingface.co/pipecat-ai/smart-turn)
+
 Turn detection is one of the most important functions of a conversational voice AI technology stack. Turn detection means deciding when a voice agent should respond to human speech.
 
  Most voice agents today use *voice activity detection (VAD)* as the basis for turn detection. VAD segments audio into "speech" and "non-speech" segments.does not take into account the actual speech content. Humans do turn detection based on grammar, tone and pace of speech, and various other complex audio cues. We want to build a model that matches human expectations more closely than the VAD-based approach can.
@@ -148,7 +150,7 @@ modal run --detach train.py
 
 Currently, there are two datasets used for training and evaluation:
   - datasets/human_5_all -- segmented speech recorded from human interactions
-  - datasets/rime_2 -- synthetic speech generated using (Rime)[https://rime.ai/]
+  - datasets/rime_2 -- synthetic speech generated using [Rime](https://rime.ai/)
 
 [ notes on data coming soon ]
 
@@ -162,7 +164,7 @@ The base Wav2Vec2-BERT model is trained on a large amount of multi-lingual data.
 
 The current checkpoint was trained on a dataset of approximately 4,000 samples. These samples focus on filler words that are typical indications of a pause without utterance completion in English-language speech.
 
-Two data sets are used in training: data collected from human speakers, and synthetic data generated using (Rime)[https://rime.ai/]. 
+Two data sets are used in training: data collected from human speakers, and synthetic data generated using [Rime](https://rime.ai/). 
 
 The biggest short-term data need is to collect, categorize, and clean human data samples that represent a broader range of speech patterns:
   - inflection and pacing that indicates a "thinking" pause rather than a completed speech segment
