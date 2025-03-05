@@ -1,3 +1,6 @@
 .idea
 venv
 __pycache__
+.torch_hub
+model-v1
+temp_output.wav
