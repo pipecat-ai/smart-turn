@@ -6,7 +6,7 @@ HuggingFace page: [pipecat-ai/smart-turn](https://huggingface.co/pipecat-ai/smar
 
 Turn detection is one of the most important functions of a conversational voice AI technology stack. Turn detection means deciding when a voice agent should respond to human speech.
 
- Most voice agents today use *voice activity detection (VAD)* as the basis for turn detection. VAD segments audio into "speech" and "non-speech" segments.does not take into account the actual speech content. Humans do turn detection based on grammar, tone and pace of speech, and various other complex audio cues. We want to build a model that matches human expectations more closely than the VAD-based approach can.
+ Most voice agents today use *voice activity detection (VAD)* as the basis for turn detection. VAD segments audio into "speech" and "non-speech" segments. VAD can't take into account the actual linguistic or acoustic content of the speech. Humans do turn detection based on grammar, tone and pace of speech, and various other complex audio and semantic cues. We want to build a model that matches human expectations more closely than the VAD-based approach can.
 
 This is a truly open model. Anyone can use, fork, and contribute to this project.
 
