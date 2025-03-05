@@ -206,7 +206,7 @@ It would be nice to port inference code to Apple's MLX platform. This would be p
 
 ## Contributors
 
-- [Marcus] (https://github.com/marcus-daily)
+- [Marcus](https://github.com/marcus-daily)
 - [Eli](https://github.com/ebb351)
 - [Mark](https://github.com/markbackman)
 - [Kwindla](https://github.com/kwindla)
