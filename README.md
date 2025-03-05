@@ -203,3 +203,10 @@ This model will likely perform well in quantized versions. Quantized models shou
 The PyTorch inference code is not particularly optimized. We should be able to hand-write inference code that runs substantially faster on both GPU and CPU, for this model architecture.
 
 It would be nice to port inference code to Apple's MLX platform. This would be particular useful for local development and debugging, as well as potentially open up the possibility of running this model locally on iOS devices (in combination with quantization).
+
+## Contributors
+
+- [Marcus] (https://github.com/marcus-daily)
+- [Eli](https://github.com/ebb351)
+- [Mark](https://github.com/markbackman)
+- [Kwindla](https://github.com/kwindla)
