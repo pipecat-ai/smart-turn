@@ -1,0 +1,13 @@
+torch
+transformers[torch]
+datasets
+scikit-learn
+seaborn
+matplotlib
+numpy
+librosa
+soundfile
+wandb
+modal
+pyaudio
+torchaudio
