@@ -8,7 +8,7 @@ Turn detection is one of the most important functions of a conversational voice 
 
  Most voice agents today use *voice activity detection (VAD)* as the basis for turn detection. VAD segments audio into "speech" and "non-speech" segments. VAD can't take into account the actual linguistic or acoustic content of the speech. Humans do turn detection based on grammar, tone and pace of speech, and various other complex audio and semantic cues. We want to build a model that matches human expectations more closely than the VAD-based approach can.
 
-This is a truly open model. Anyone can use, fork, and contribute to this project.
+This is a truly open model (BSD 2-clause license). Anyone can use, fork, and contribute to this project. This model started its life as a work in progress component of the [Pipecat](https://pipecat.ai) ecosystem. Pipecat is an open source, vendor neutral framework for building voice and multimodal realtime AI agents.
 
  ## Current state of the model
 
@@ -152,7 +152,39 @@ Currently, there are two datasets used for training and evaluation:
   - datasets/human_5_all -- segmented speech recorded from human interactions
   - datasets/rime_2 -- synthetic speech generated using [Rime](https://rime.ai/)
 
-[ notes on data coming soon ]
+Four splits are created [when these two datasets are loaded](https://github.com/pipecat-ai/smart-turn/blob/a9e49f18da2d70dde94477be05405638db9dd8bc/train.py#L188).
+  - The train, validate, and test sets are a mix of synthetic and human data
+  - The human eval set contains only human data
+
+```
+  7 -- TRAIN --
+  8   Total samples: 5,694
+  9   Positive samples (Complete): 2,733 (48.00%)
+ 10   Negative samples (Incomplete): 2,961 (52.00%)
+ 11 
+ 12 -- VALIDATION --
+ 13   Total samples: 712
+ 14   Positive samples (Complete): 352 (49.44%)
+ 15   Negative samples (Incomplete): 360 (50.56%)
+ 16 
+ 17 -- TEST --
+ 18   Total samples: 712
+ 19   Positive samples (Complete): 339 (47.61%)
+ 20   Negative samples (Incomplete): 373 (52.39%)
+ 21 
+ 22 -- HUMAN_EVAL --
+ 23   Total samples: 773
+ 24   Positive samples (Complete): 372 (48.12%)
+ 25   Negative samples (Incomplete): 401 (51.88%)
+ ```
+
+Our goal for an initial version of this model was to overfit on a non-trivial amount of data, plus exceed a non-quantitative vibes threshold when experimenting interactively. The next step is to broaden the amount of data and move away from overfitting towards more generalization.
+
+
+![Confusion matrix for test set](docs/static/confusion_matrix_test_1360_b0d85b27b14cc7bd6a0d.png)
+
+
+[ more notes on data coming soon ]
 
 ## Things to do
 
@@ -192,13 +224,13 @@ Adding additional context to the model is an open-ended research challenge. Some
 
 ### Supporting training on more platforms
 
-We trained early versions of this model on Google Colab. We should support Colab as a training platform, again!
+We trained early versions of this model on Google Colab. We should support Colab as a training platform, again! It would be great to have quickstarts for training on a wide variety of platforms.
 
-It would be great to port the training code to Apple's MLX platform as well. (A lot of us have MacBooks!)
+We should alsoport the training code to Apple's MLX platform. A lot of us have MacBooks!
 
 ### Optimization
 
-This model will likely perform well in quantized versions. Quantized models should run significantly faster.
+This model will likely perform well in quantized versions. Quantized versions should run significantly faster than the current float32 weights.
 
 The PyTorch inference code is not particularly optimized. We should be able to hand-write inference code that runs substantially faster on both GPU and CPU, for this model architecture.
 
