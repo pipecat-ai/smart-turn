@@ -162,9 +162,9 @@ The base Wav2Vec2-BERT model is trained on a large amount of multi-lingual data.
 
 ### More data
 
-The current checkpoint was trained on a dataset of approximately 4,000 samples. These samples focus on filler words that are typical indications of a pause without utterance completion in English-language speech.
+The current checkpoint was trained on a dataset of approximately 8,000 samples. These samples mostly focus on filler words that are typical indications of a pause without utterance completion in English-language speech.
 
-Two data sets are used in training: data collected from human speakers, and synthetic data generated using [Rime](https://rime.ai/). 
+Two data sets are used in training: around 4,000 samples collected from human speakers, and around 4,000 synthetic data samples generated using [Rime](https://rime.ai/). 
 
 The biggest short-term data need is to collect, categorize, and clean human data samples that represent a broader range of speech patterns:
   - inflection and pacing that indicates a "thinking" pause rather than a completed speech segment
