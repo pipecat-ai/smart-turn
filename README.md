@@ -28,6 +28,19 @@ source venv/bin/activate
 pip install -r requirements.txt
 ```
 
+## Installing audio dependencies
+You may need to install PortAudio development libraries if not already installed as those are required for PyAudio:
+### Ubuntu/Debian
+```bash
+sudo apt-get update
+sudo apt-get install portaudio19-dev python3-dev
+```
+
+### macOS (using Homebrew)
+```bash
+brew install portaudio
+```
+
 Run a command-line utility that streams audio from the system microphone, detects segment start/stop using VAD, and sends each segment to the model for a phrase endpoint prediction.
 
 ```

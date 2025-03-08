@@ -51,6 +51,7 @@ CONFIG = {
     "eval_batch_size": 32,
     "warmup_ratio": 0.2,
     "weight_decay": 0.05,
+    "gradient_accumulation_steps": 1,
 
     # Evaluation parameters
     "eval_steps": 50,
@@ -304,6 +305,7 @@ def training_run():
         per_device_eval_batch_size=CONFIG["eval_batch_size"],
         num_train_epochs=CONFIG["num_epochs"],
         evaluation_strategy="steps",
+        gradient_accumulation_steps=CONFIG["gradient_accumulation_steps"],
         eval_steps=CONFIG["eval_steps"],
         save_steps=CONFIG["save_steps"],
         logging_steps=CONFIG["logging_steps"],
