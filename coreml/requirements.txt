@@ -1,0 +1,8 @@
+coremltools>=7.2
+torch==2.5.0
+torchaudio==2.5.0
+transformers
+scikit-learn<1.6.0
+numpy
+pyaudio
+scipy
