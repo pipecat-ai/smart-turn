@@ -78,16 +78,21 @@ coreml_model = ct.convert(
         ct.TensorType(
             name="input_features", shape=sample_input["input_features"].shape, dtype=np.float32
         ),
-        # huh: if we specify the dtype for the mask tensor, conversion works but inference crashes
+        # note: if we specify the dtype here and don't disable quantization (using the
+        # compute_precision argument below), export works but the model crashes during
+        # inference.
         ct.TensorType(
-            name="attention_mask",
-            shape=sample_input["attention_mask"].shape,
-            # dtype=np.int32
+            name="attention_mask", shape=sample_input["attention_mask"].shape, dtype=np.int32
         ),
     ],
-    outputs=[ct.TensorType(name="turn_probabilities", dtype=np.float32)],
+    outputs=[ct.TensorType(name="logits", dtype=np.float32)],
     minimum_deployment_target=ct.target.iOS15,
     compute_units=ct.ComputeUnit.ALL,
+    # todo: Try to make a quantized version work. currently, commenting out this line
+    # destroys prediction accuracy. By default, coremltools quantizes to FLOAT16, but
+    # either our model is very sensitive to quantization or there are issues with how
+    # quantization is implemented. There are overflow warnings during conversion that
+    # may just be bugs that can be fixed in the coremltools operator implementations.
     compute_precision=ct.precision.FLOAT32,
 )
 
