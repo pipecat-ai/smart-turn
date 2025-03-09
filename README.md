@@ -30,6 +30,7 @@ pip install -r requirements.txt
 
 ## Installing audio dependencies
 You may need to install PortAudio development libraries if not already installed as those are required for PyAudio:
+
 ### Ubuntu/Debian
 ```bash
 sudo apt-get update
@@ -151,19 +152,20 @@ def predict_endpoint(audio_array):
 
 All training code is defined in `train.py`.
 
+The training code will download datasets from the [pipecat-ai](https://huggingface.co/pipecat-ai) HuggingFace repository. (But of course you can modify it to use your own datasets.)
+
 You can run training locally or using [Modal](https://modal.com). Training runs are logged to [Weights & Biases](https://www.wandb.ai) unless you disable logging.
 
 ```
-# To run a training job on Modal, upload training data to a Modal volume,
-# set up the Modal environment, then run:
+# To run a training job on Modal, run:
 modal run --detach train.py
 ```
 
 ### Collecting and contributing data
 
 Currently, there are two datasets used for training and evaluation:
-  - datasets/human_5_all -- segmented speech recorded from human interactions
-  - datasets/rime_2 -- synthetic speech generated using [Rime](https://rime.ai/)
+  - [human_5_all](https://huggingface.co/datasets/pipecat-ai/human_5_all) -- segmented speech recorded from human interactions
+  - [rime_2](https://huggingface.co/datasets/pipecat-ai/rime_2) -- synthetic speech generated using [Rime](https://rime.ai/)
 
 Four splits are created [when these two datasets are loaded](https://github.com/pipecat-ai/smart-turn/blob/a9e49f18da2d70dde94477be05405638db9dd8bc/train.py#L188).
   - The train, validate, and test sets are a mix of synthetic and human data
