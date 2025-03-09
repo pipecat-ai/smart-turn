@@ -1,4 +1,4 @@
-coremltools>=7.2
+coremltools>=8.0
 torch==2.5.0
 torchaudio==2.5.0
 transformers

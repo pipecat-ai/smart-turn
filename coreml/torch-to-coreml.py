@@ -1,6 +1,7 @@
 import torch
 from transformers import Wav2Vec2BertForSequenceClassification, AutoFeatureExtractor
 import coremltools as ct
+import numpy as np
 
 MODEL_PATH = "pipecat-ai/smart-turn"
 
@@ -23,6 +24,8 @@ sample_input = processor(
     return_tensors="pt",
 )
 print(sample_input)
+print("input_features dtype: ", sample_input["input_features"].dtype)
+print("attention_mask dtype: ", sample_input["attention_mask"].dtype)
 
 print("input_features shape: ", sample_input["input_features"].shape)
 print("attention_mask shape: ", sample_input["attention_mask"].shape)
@@ -36,16 +39,25 @@ class TurnClassifier(torch.nn.Module):
 
     def forward(self, input_features, attention_mask):
         # Run the model
-        print("x", input_features, attention_mask)
+        print("inputs", input_features, attention_mask)
+        print("----")
         outputs = self.model(input_features, attention_mask)
+        print("outputs")
+        print(outputs)
+        print("outputs logits shape")
+        print(outputs.logits.shape)
+        print("----")
 
         # Apply softmax to get probabilities
-        probs = torch.nn.functional.softmax(outputs.logits, dim=1)
-        return probs
+        # probs = torch.nn.functional.softmax(outputs.logits, dim=1)
+        # return probs
+
+        return outputs.logits
 
 
 # Create and trace the model
 turn_classifier = TurnClassifier(model)
+# turn_classifier = model
 turn_classifier.eval()
 
 traced_model = torch.jit.trace(
@@ -56,18 +68,27 @@ print("Successfully traced the model")
 
 print("Exporting to CoreML...")
 
-# Define the proper input shape for audio
-input_shape = (1, 16000 * 8)  # (batch_size, audio_samples)
+# Define the proper output shape for audio
+output_shape = [1, 2]  # logits for two prediction categories
 
 # Convert to CoreML
 coreml_model = ct.convert(
     model_for_conversion,
     inputs=[
-        ct.TensorType(name="input_features", shape=sample_input["input_features"].shape),
-        ct.TensorType(name="attention_mask", shape=sample_input["attention_mask"].shape),
+        ct.TensorType(
+            name="input_features", shape=sample_input["input_features"].shape, dtype=np.float32
+        ),
+        # huh: if we specify the dtype for the mask tensor, conversion works but inference crashes
+        ct.TensorType(
+            name="attention_mask",
+            shape=sample_input["attention_mask"].shape,
+            # dtype=np.int32
+        ),
     ],
-    outputs=[ct.TensorType(name="turn_probabilities")],
+    outputs=[ct.TensorType(name="turn_probabilities", dtype=np.float32)],
     minimum_deployment_target=ct.target.iOS15,
+    compute_units=ct.ComputeUnit.ALL,
+    compute_precision=ct.precision.FLOAT32,
 )
 
 # Set model metadata
