@@ -2,6 +2,8 @@
 
 Work in progress towards producing a performant coreml modal automatically from PyTorch model checkpoints.
 
+The coreml model package is in the [coreml directory of the Hugging Face](https://huggingface.co/pipecat-ai/smart-turn/tree/main/coreml) repo.
+
 ## Current status
 
 Model export and inference work.
@@ -26,4 +28,4 @@ On an m4 macbook, inference runs in ~125ms.
   - Fix issues with quantization.
   - Write a wrapper that loads platform-specific versions of the model from HuggingFace.
 
-  
+
