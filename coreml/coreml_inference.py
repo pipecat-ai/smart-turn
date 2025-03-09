@@ -1,5 +1,8 @@
+import torch
 import coremltools as ct
 from transformers import Wav2Vec2BertForSequenceClassification, AutoFeatureExtractor
+import numpy as np
+import hashlib
 
 TORCH_MODEL_PATH = "pipecat-ai/smart-turn"
 MODEL_PATH = "smart_turn_classifier.mlpackage"
@@ -25,6 +28,21 @@ def predict_endpoint(audio_array):
         - probability: Probability of completion class
     """
 
+    # Calculate basic statistics
+    audio_min = np.min(audio_array)
+    audio_max = np.max(audio_array)
+    audio_mean = np.mean(audio_array)
+    audio_std = np.std(audio_array)
+
+    # Calculate a hash of the input data
+    audio_hash = hashlib.md5(audio_array.tobytes()).hexdigest()[:10]
+
+    print(
+        f"Input Audio Stats - Min: {audio_min:.4f}, Max: {audio_max:.4f}, Mean: {audio_mean:.4f}, Std: {audio_std:.4f}"
+    )
+    print(f"Input Audio Hash: {audio_hash}")
+    print(f"Input Audio Shape: {audio_array.shape}")
+
     inputs = processor(
         audio_array,
         sampling_rate=16000,
@@ -35,4 +53,19 @@ def predict_endpoint(audio_array):
         return_tensors="pt",
     )
 
-    return model.predict(dict(inputs))
+    print(dict(inputs))
+    output = model.predict(dict(inputs))
+    logits = output["turn_probabilities"]  # Core ML returns numpy array
+    print("logits", logits)
+    # Convert numpy array to PyTorch tensor before applying softmax
+    logits_tensor = torch.tensor(logits)
+    probabilities = torch.nn.functional.softmax(logits_tensor, dim=1)
+    completion_prob = probabilities[0, 1].item()  # Probability of class 1 (Complete)
+
+    # Make prediction (1 for Complete, 0 for Incomplete)
+    prediction = 1 if completion_prob > 0.5 else 0
+
+    return {
+        "prediction": prediction,
+        "probability": completion_prob,
+    }
