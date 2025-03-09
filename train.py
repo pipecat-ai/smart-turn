@@ -6,7 +6,7 @@ import modal
 import numpy as np
 import seaborn as sns
 import wandb
-from datasets import load_from_disk, concatenate_datasets
+from datasets import load_dataset, concatenate_datasets
 from sklearn.metrics import accuracy_score, precision_score, recall_score, f1_score, confusion_matrix
 from transformers import (
     Trainer,
@@ -39,9 +39,9 @@ image = modal.Image.debian_slim().apt_install("ffmpeg").pip_install(
 CONFIG = {
     "run_name": "model-v1",
     "model_name": "facebook/w2v-bert-2.0",
-    "human_eval_dataset_path": "/data/datasets/human_5_all",
+    "human_eval_dataset_path": "pipecat-ai/human_5_all",
     "dataset_paths": [
-        "/data/datasets/rime_2",
+        "pipecat-ai/rime_2",
     ],
 
     # Training parameters
@@ -187,10 +187,10 @@ def training_run():
         return inputs
 
     # Load datasets.
-    human_dataset = load_from_disk(CONFIG["human_eval_dataset_path"])["train"]
+    human_dataset = load_dataset(CONFIG["human_eval_dataset_path"])["train"]
     datasets_list = []
     for dataset_path in CONFIG["dataset_paths"]:
-        ds = load_from_disk(dataset_path)["train"]
+        ds = load_dataset(dataset_path)["train"]
         datasets_list.append(ds)
     # Also use a portion of the human dataset for training.
     human_split = human_dataset.train_test_split(test_size=0.2, seed=42)
