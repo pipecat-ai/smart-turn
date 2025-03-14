@@ -221,6 +221,8 @@ The biggest short-term data need is to collect, categorize, and clean human data
 
 The synthetic data samples in the `datasets/rime_2` dataset only improve model performance by a small margin, right now. But one possible goal for this project is to work towards a completely synthetic data generation pipeline. The potential advantages of such a pipeline include the ability to support more languages more easily, a better flywheel for building more accurate versions of the model, and the ability to rapidly customize the model for specific use cases.
 
+For full guidelines on generating contributing data, see the [data_generation_contribution_guide.md](docs/data_generation_contribution_guide.md).
+
 If you have expertise in steering speech models so that they output specific patterns (or if you want to experiment and learn), please consider contributing synthetic data.
 
 ### Architecture experiments
