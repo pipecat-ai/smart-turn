@@ -6,7 +6,6 @@ import modal
 import numpy as np
 import seaborn as sns
 import wandb
-from datasets import load_dataset, concatenate_datasets
 from sklearn.metrics import accuracy_score, precision_score, recall_score, f1_score, confusion_matrix
 from transformers import (
     Trainer,
@@ -16,6 +15,8 @@ from transformers import (
     Wav2Vec2BertForSequenceClassification,
     EarlyStoppingCallback
 )
+
+from datasets import load_dataset, concatenate_datasets, load_from_disk
 
 # Define Modal stub and volume.
 app = modal.App("endpointing-training")
@@ -39,10 +40,21 @@ image = modal.Image.debian_slim().apt_install("ffmpeg").pip_install(
 CONFIG = {
     "run_name": "model-v1",
     "model_name": "facebook/w2v-bert-2.0",
-    "human_eval_dataset_path": "pipecat-ai/human_5_all",
-    "dataset_paths": [
-        "pipecat-ai/rime_2",
-    ],
+
+    # Three types of dataset are used during in this script: training, eval, and test.
+    #
+    # - The eval set is used to guide the training process, for example with early stopping, and selecting
+    #   the best checkpoint.
+    #
+    # - The test set is kept completely separate from the training process, and is periodically used to
+    #   evaluate the performance of the model.
+    #
+    # The datasets in `datasets_training` are split 80/10/10, and used for all three purposes.
+    # The datasets in `datasets_test` are only used for testing, and are not split.
+    #
+    # All test datasets are stored and reported separately.
+    "datasets_training": ["pipecat-ai/rime_2", "pipecat-ai/human_5_all"],
+    "datasets_test": [], # e.g. "/data/datasets/human_5_filler"
 
     # Training parameters
     "learning_rate": 5e-5,
@@ -62,75 +74,143 @@ CONFIG = {
     "num_frozen_layers": 20
 }
 
+def load_dataset_at(path: str):
+    if path.startswith('/'):
+        return load_from_disk(path)["train"]
+    else:
+        return load_dataset(path)["train"]
+
+def prepare_datasets(preprocess_function):
+    """
+    Loads, splits, and organizes datasets based on CONFIG settings.
+
+    Returns a dictionary with "training", "eval", and "test" entries.
+    """
+    datasets_training = CONFIG["datasets_training"]
+    datasets_test = CONFIG["datasets_test"]
+
+    overlap = set(datasets_training).intersection(set(datasets_test))
+    if overlap:
+        raise ValueError(f"Found overlapping datasets in training and test: {overlap}")
+
+    training_splits = []
+    eval_splits = []
+    test_splits = {}
+
+    for dataset_path in datasets_training:
+        # Extract dataset name from path
+        dataset_name = dataset_path.split("/")[-1]
+
+        full_dataset = load_dataset_at(dataset_path)
+
+        # Create train/eval/test split (80/10/10)
+        dataset_dict = full_dataset.train_test_split(test_size=0.2, seed=42)
+        training_splits.append(dataset_dict["train"])
+        eval_test_dict = dataset_dict["test"].train_test_split(test_size=0.5, seed=42)
+
+        eval_splits.append(eval_test_dict["train"])
+        test_splits[dataset_name] = eval_test_dict["test"]
+
+    # Merge training and eval splits
+    merged_training_dataset = concatenate_datasets(training_splits).shuffle(seed=42)
+    merged_eval_dataset = concatenate_datasets(eval_splits)
+
+    # Load and add the full test datasets
+    for dataset_path in datasets_test:
+        dataset_name = dataset_path.split("/")[-1]
+        test_splits[dataset_name] = load_dataset_at(dataset_path)
+
+    # Apply preprocessing function
+
+    merged_training_dataset = merged_training_dataset.map(
+        preprocess_function,
+        batched=False,
+        remove_columns=merged_training_dataset.column_names
+    )
+
+    merged_eval_dataset = merged_eval_dataset.map(
+        preprocess_function,
+        batched=False,
+        remove_columns=merged_eval_dataset.column_names
+    )
+
+    for dataset_name, dataset in test_splits.items():
+        test_splits[dataset_name] = dataset.map(
+            preprocess_function,
+            batched=False,
+            remove_columns=dataset.column_names
+        )
+
+    return {
+        "training": merged_training_dataset,
+        "eval": merged_eval_dataset,
+        "test": test_splits
+    }
+
 
 class ExternalEvaluationCallback(TrainerCallback):
 
-    def __init__(self, eval_dataset, compute_metrics, trainer):
+    def __init__(self, test_datasets, compute_metrics, trainer):
         super().__init__()
-        self.eval_dataset = eval_dataset
+        self.test_datasets = test_datasets
         self.compute_metrics = compute_metrics
         self.trainer = trainer
 
     def on_evaluate(self, args, state, control, **kwargs):
-        print("\nExternal evaluation callback triggered")
-        if self.trainer is None:
-            print("Trainer is None!")
-            return
 
-        predictions = self.trainer.predict(self.eval_dataset, metric_key_prefix="external")
-        probs = predictions.predictions
-        labels = predictions.label_ids
+        for dataset_name, dataset in self.test_datasets.items():
 
-        metrics = self.compute_metrics((probs, labels))
+            predictions = self.trainer.predict(dataset, metric_key_prefix=f"test_{dataset_name}")
+            probs = predictions.predictions
+            labels = predictions.label_ids
 
-        external_metrics = {
-            f"external_{k}": v
-            for k, v in metrics.items()
-        }
+            metrics = self.compute_metrics((probs, labels))
 
-        external_metrics["external_prob_dist"] = wandb.Histogram(probs.squeeze())
+            external_metrics = {
+                f"test_{dataset_name}_{k}": v
+                for k, v in metrics.items()
+            }
 
-        wandb.log(external_metrics, step=state.global_step)
+            external_metrics[f"test_{dataset_name}_prob_dist"] = wandb.Histogram(probs.squeeze())
 
-        print("\nExternal Evaluation Metrics:")
-        for k, v in external_metrics.items():
-            if isinstance(v, (float, int)):
-                print(f"{k}: {v:.4f}")
+            wandb.log(external_metrics, step=state.global_step)
 
-def log_dataset_statistics(datasets_dict):
+            print(f"\nExternal Evaluation Metrics ({dataset_name}):")
+            for k, v in external_metrics.items():
+                if isinstance(v, (float, int)):
+                    print(f"{k}: {v:.4f}")
+
+def log_dataset_statistics(split_name, dataset):
     """Log detailed statistics about each dataset split."""
-    print("\n------ Start of dataset statistics ------")
 
-    for split_name, dataset in datasets_dict.items():
-        # Basic statistics
-        total_samples = len(dataset)
-        if "labels" in dataset.features:
-            labels = dataset["labels"]
-            positive_samples = sum(1 for label in labels if label == 1)
-            negative_samples = total_samples - positive_samples
-            positive_ratio = positive_samples / total_samples * 100
+    print(f"\n-- Dataset statistics: {split_name} --")
 
-            print(f"\n-- {split_name.upper()} --")
-            print(f"  Total samples: {total_samples:,}")
-            print(f"  Positive samples (Complete): {positive_samples:,} ({positive_ratio:.2f}%)")
-            print(f"  Negative samples (Incomplete): {negative_samples:,} ({100 - positive_ratio:.2f}%)")
+    # Basic statistics
+    total_samples = len(dataset)
+    if "labels" in dataset.features:
+        labels = dataset["labels"]
+        positive_samples = sum(1 for label in labels if label == 1)
+        negative_samples = total_samples - positive_samples
+        positive_ratio = positive_samples / total_samples * 100
 
-            # Audio length statistics if available
-            if "audio" in dataset.features:
-                audio_lengths = [len(x["array"]) / 16000 for x in dataset["audio"]]  # Convert to seconds
-                avg_length = sum(audio_lengths) / len(audio_lengths)
-                min_length = min(audio_lengths)
-                max_length = max(audio_lengths)
+        print(f"  Total samples: {total_samples:,}")
+        print(f"  Positive samples (Complete): {positive_samples:,} ({positive_ratio:.2f}%)")
+        print(f"  Negative samples (Incomplete): {negative_samples:,} ({100 - positive_ratio:.2f}%)")
 
-                print(f"  Audio statistics (in seconds):")
-                print(f"    Average length: {avg_length:.2f}")
-                print(f"    Min length: {min_length:.2f}")
-                print(f"    Max length: {max_length:.2f}")
-        else:
-            print(f"\n-- {split_name.upper()} (no labels!) --")
-            print(f"  Total samples: {total_samples:,}")
+        # Audio length statistics if available
+        if "audio" in dataset.features:
+            audio_lengths = [len(x["array"]) / 16000 for x in dataset["audio"]]  # Convert to seconds
+            avg_length = sum(audio_lengths) / len(audio_lengths)
+            min_length = min(audio_lengths)
+            max_length = max(audio_lengths)
 
-    print("\n------ End of dataset statistics ------")
+            print(f"  Audio statistics (in seconds):")
+            print(f"    Average length: {avg_length:.2f}")
+            print(f"    Min length: {min_length:.2f}")
+            print(f"    Max length: {max_length:.2f}")
+    else:
+        print(f"  (no labels!)")
+        print(f"  Total samples: {total_samples:,}")
 
 @app.function(
     image=image,
@@ -186,65 +266,38 @@ def training_run():
         inputs["labels"] = label
         return inputs
 
-    # Load datasets.
-    human_dataset = load_dataset(CONFIG["human_eval_dataset_path"])["train"]
-    datasets_list = []
-    for dataset_path in CONFIG["dataset_paths"]:
-        ds = load_dataset(dataset_path)["train"]
-        datasets_list.append(ds)
-    # Also use a portion of the human dataset for training.
-    human_split = human_dataset.train_test_split(test_size=0.2, seed=42)
-    datasets_list.append(human_split["train"])
+    datasets = prepare_datasets(preprocess_function)
 
-    # Concatenate and shuffle datasets.
-    full_dataset = concatenate_datasets(datasets_list).shuffle(seed=42)
+    log_dataset_statistics("training", datasets["training"])
+    log_dataset_statistics("eval", datasets["eval"])
 
-    # Split dataset into train, validation, and test splits.
-    first_split = full_dataset.train_test_split(test_size=0.2, seed=42)
-    train_dataset = first_split["train"]
-    second_split = first_split["test"].train_test_split(test_size=0.5, seed=42)
-    processed_splits = {
-        "train": train_dataset,
-        "validation": second_split["test"],
-        "test": second_split["train"],
-        "human_eval": human_split["test"]
-    }
-
-    # Map the preprocess function to each split (processing one example at a time).
-    processed_dataset = {}
-    for split_name, ds in processed_splits.items():
-        processed_dataset[split_name] = ds.map(
-            preprocess_function,
-            batched=False,
-            remove_columns=ds.column_names
-        )
-
-    log_dataset_statistics(processed_dataset)
+    for dataset_name, dataset in datasets["test"].items():
+        log_dataset_statistics(dataset_name, dataset)
 
     def compute_metrics(eval_pred):
         logits, labels = eval_pred
         preds = np.argmax(logits, axis=1)
 
         metrics = {
-            "eval_accuracy": accuracy_score(labels, preds),
-            "eval_precision": precision_score(labels, preds, zero_division=0),
-            "eval_recall": recall_score(labels, preds, zero_division=0),
-            "eval_f1": f1_score(labels, preds, zero_division=0)
+            "accuracy": accuracy_score(labels, preds),
+            "precision": precision_score(labels, preds, zero_division=0),
+            "recall": recall_score(labels, preds, zero_division=0),
+            "f1": f1_score(labels, preds, zero_division=0)
         }
 
         tn, fp, fn, tp = confusion_matrix(labels, preds).ravel()
         metrics.update({
-            "eval_pred_positives": tp + fp,
-            "eval_pred_negatives": tn + fn,
-            "eval_true_positives": tp,
-            "eval_false_positives": fp,
-            "eval_true_negatives": tn,
-            "eval_false_negatives": fn,
+            "pred_positives": tp + fp,
+            "pred_negatives": tn + fn,
+            "true_positives": tp,
+            "false_positives": fp,
+            "true_negatives": tn,
+            "false_negatives": fn,
         })
 
         return metrics
 
-    def evaluate_and_plot(trainer, dataset, split_name="test"):
+    def evaluate_and_plot(trainer, dataset, split_name):
         print(f"\nEvaluating on {split_name} set...")
         metrics = trainer.evaluate(eval_dataset=dataset)
 
@@ -329,8 +382,8 @@ def training_run():
     trainer = Trainer(
         model=model,
         args=training_args,
-        train_dataset=processed_dataset["train"],
-        eval_dataset=processed_dataset["validation"],
+        train_dataset=datasets["training"],
+        eval_dataset=datasets["eval"],
         tokenizer=processor,
         compute_metrics=compute_metrics,
         callbacks=[
@@ -339,7 +392,7 @@ def training_run():
     )
 
     trainer.add_callback(ExternalEvaluationCallback(
-        eval_dataset=processed_dataset["human_eval"],
+        test_datasets=datasets["test"],
         compute_metrics=compute_metrics,
         trainer=trainer
     ))
@@ -352,29 +405,19 @@ def training_run():
     trainer.train()
 
     # Evaluate on validation set
-    print(f"\n[{log_timestamp()}] Final validation evaluation:")
-    val_metrics, val_predictions = evaluate_and_plot(trainer, processed_dataset["validation"], "validation")
+    print(f"\n[{log_timestamp()}] Final eval set evaluation:")
+    evaluate_and_plot(trainer, datasets["eval"], "eval")
 
     # Evaluate on test set
-    print(f"\n[{log_timestamp()}] Test set evaluation:")
-    test_metrics, test_predictions = evaluate_and_plot(trainer, processed_dataset["test"], "test")
+    for dataset_name, dataset in datasets["test"].items():
+        print(f"\n[{log_timestamp()}] Test set evaluation ({dataset_name}):")
+        evaluate_and_plot(trainer, dataset, dataset_name)
 
     # Save the final model and processor.
     final_save_path = f"{training_args.output_dir}/final_model"
     trainer.save_model(final_save_path)
     processor.save_pretrained(final_save_path)
     print(f"\nModel saved to {final_save_path}")
-
-    # Print comparison of validation and test metrics
-    print("\nMetrics Comparison:")
-    print("{:<20} {:<15} {:<15}".format("Metric", "Validation", "Test"))
-    print("-" * 50)
-    for key in val_metrics.keys():
-        if key.startswith("eval_"):
-            metric_name = key[5:]  # Remove 'eval_' prefix
-            val_value = val_metrics[key]
-            test_value = test_metrics[key]
-            print("{:<20} {:<15.4f} {:<15.4f}".format(metric_name, val_value, test_value))
 
     wandb.finish()
 
