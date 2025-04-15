@@ -37,8 +37,7 @@ image = modal.Image.debian_slim().apt_install("ffmpeg").pip_install(
 )
 
 # Hyperparameters and configuration
-CONFIG = {
-    "run_name": "model-v1",
+BASE_CONFIG = {
     "model_name": "facebook/w2v-bert-2.0",
 
     # Three types of dataset are used during in this script: training, eval, and test.
@@ -53,7 +52,14 @@ CONFIG = {
     # The datasets in `datasets_test` are only used for testing, and are not split.
     #
     # All test datasets are stored and reported separately.
-    "datasets_training": ["pipecat-ai/rime_2", "pipecat-ai/human_5_all"],
+    "datasets_training": [
+        "pipecat-ai/rime_2",
+        "pipecat-ai/human_5_all",
+        "pipecat-ai/human_convcollector_1",
+        "pipecat-ai/orpheus_grammar_1",
+        "pipecat-ai/orpheus_midfiller_1",
+        "pipecat-ai/orpheus_endfiller_1"
+    ],
     "datasets_test": [], # e.g. "/data/datasets/human_5_filler"
 
     # Training parameters
@@ -71,7 +77,7 @@ CONFIG = {
     "logging_steps": 5,
 
     # Model architecture parameters
-    "num_frozen_layers": 20
+    "num_frozen_layers": 10
 }
 
 def load_dataset_at(path: str):
@@ -80,14 +86,14 @@ def load_dataset_at(path: str):
     else:
         return load_dataset(path)["train"]
 
-def prepare_datasets(preprocess_function):
+def prepare_datasets(preprocess_function, config):
     """
-    Loads, splits, and organizes datasets based on CONFIG settings.
+    Loads, splits, and organizes datasets based on config settings.
 
     Returns a dictionary with "training", "eval", and "test" entries.
     """
-    datasets_training = CONFIG["datasets_training"]
-    datasets_test = CONFIG["datasets_test"]
+    datasets_training = config["datasets_training"]
+    datasets_test = config["datasets_test"]
 
     overlap = set(datasets_training).intersection(set(datasets_test))
     if overlap:
@@ -222,7 +228,14 @@ def log_dataset_statistics(split_name, dataset):
         modal.Secret.from_dict({"MODAL_LOGLEVEL": "DEBUG"})
     ]
 )
-def training_run():
+def training_run(run_number):
+    # Create config with run number
+    today = datetime.now().strftime("%Y-%m-%d")
+    CONFIG = BASE_CONFIG.copy()
+    CONFIG["run_name"] = f"model-v2-{today}__2__run{run_number}"
+
+    print(f"Starting training run: {CONFIG['run_name']}")
+
     # Initialize Weights & Biases.
     wandb_api_key = os.environ.get("WANDB_API_KEY")
     if not wandb_api_key:
@@ -266,7 +279,7 @@ def training_run():
         inputs["labels"] = label
         return inputs
 
-    datasets = prepare_datasets(preprocess_function)
+    datasets = prepare_datasets(preprocess_function, CONFIG)
 
     log_dataset_statistics("training", datasets["training"])
     log_dataset_statistics("eval", datasets["eval"])
@@ -422,5 +435,6 @@ def training_run():
     wandb.finish()
 
 @app.local_entrypoint()
-def main():
-    training_run.remote()
+def main(run_number: str = "00"):
+    print(f"Initiating training run {run_number}")
+    training_run.remote(run_number)
