@@ -23,6 +23,17 @@ On an m4 macbook, inference runs in ~125ms.
   - coreml_record_and_predict.py -- port of ../record_and_predicty.py. Run this for an interactive test with the system mic
   - coreml_inference.py -- implementation of ../inference.py
 
+## Downloading smart_turn_classifier.mlpackage
+
+```bash
+    # Git LFS (Large File Storage)
+    brew install git-lfs
+    # Hugging Face uses LFS to store large model files, including .mlpackage
+    git lfs install
+    # clone the repo with the smart_turn_classifier.mlpackage
+    git clone https://huggingface.co/pipecat-ai/smart-turn
+```
+
 ## Todo
 
   - Fix issues with quantization.

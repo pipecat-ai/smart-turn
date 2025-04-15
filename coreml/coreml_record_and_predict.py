@@ -4,6 +4,7 @@ import sys
 from scipy.io import wavfile
 import time
 import torch
+from silero_vad import load_silero_vad
 
 # Import the new inference script
 from coreml_inference import predict_endpoint
@@ -23,13 +24,7 @@ TEMP_OUTPUT_WAV = "temp_output.wav"
 try:
     print("Attempting to load Silero VAD model...")
     torch.hub.set_dir("./.torch_hub")  # Set a specific hub directory for debugging
-    MODEL, _ = torch.hub.load(
-        repo_or_dir="snakers4/silero-vad",
-        source="github",
-        model="silero_vad",  # Explicitly specify the model name
-        onnx=False,
-        trust_repo=True,
-    )  # Trust the repository
+    MODEL = load_silero_vad()
     print("Silero VAD model loaded successfully.")
 except Exception as e:
     print(f"Error loading Silero VAD model: {e}")
