@@ -1,3 +1,6 @@
+> [!NOTE]
+> Contribute to model development. Generate turn detection data by playing the [turn training games](https://turn-training.pipecat.ai/)
+
 # Smart turn detection
 
 This is an open source, community-driven, native audio turn detection model.
