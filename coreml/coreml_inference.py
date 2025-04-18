@@ -1,9 +1,18 @@
-import torch
+import logging
+import os
+
 import coremltools as ct
-from transformers import Wav2Vec2BertForSequenceClassification, AutoFeatureExtractor
+import torch
+from transformers import AutoFeatureExtractor, Wav2Vec2BertForSequenceClassification
+
+# Setup logging
+logging.basicConfig(level=logging.INFO)
+logger = logging.getLogger(__name__)
 
 TORCH_MODEL_PATH = "pipecat-ai/smart-turn"
-MODEL_PATH = "smart_turn_classifier.mlpackage"
+# Get the model path from environment variable, with a fallback default value
+MODEL_PATH = os.environ.get("COREML_MODEL_PATH", "smart_turn_classifier.mlpackage")
+logger.info(f"Loading Core ML model from: {MODEL_PATH}")
 
 # Load model and processor
 # todo: we shouldn't need to load the torch_model for coreml-only operation. how do we get

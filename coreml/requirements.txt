@@ -6,3 +6,4 @@ scikit-learn<1.6.0
 numpy
 pyaudio
 scipy
+silero-vad
