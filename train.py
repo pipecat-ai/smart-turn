@@ -7,38 +7,37 @@ import numpy as np
 import seaborn as sns
 import wandb
 from sklearn.metrics import accuracy_score, precision_score, recall_score, f1_score, confusion_matrix
-from transformers import (
-    Trainer,
-    TrainingArguments,
-    TrainerCallback,
-    AutoFeatureExtractor,
-    Wav2Vec2BertForSequenceClassification,
-    EarlyStoppingCallback
-)
+from transformers import Wav2Vec2Processor
+from transformers.trainer import Trainer
+from transformers.trainer_callback import TrainerCallback, EarlyStoppingCallback
+from transformers.trainer_utils import IntervalStrategy
+from transformers.training_args import TrainingArguments
 
 from datasets import load_dataset, concatenate_datasets, load_from_disk
+from logger import log, log_model_structure, log_dataset_statistics, log_dependencies, ProgressLoggerCallback
+from model import Wav2Vec2ForEndpointing
 
 # Define Modal stub and volume.
 app = modal.App("endpointing-training")
 volume = modal.Volume.from_name("endpointing", create_if_missing=False)
 
 # Define Modal image with required dependencies.
-image = modal.Image.debian_slim().apt_install("ffmpeg").pip_install(
+image = modal.Image.debian_slim().pip_install(
     "torch",
-    "transformers[torch]",
-    "datasets",
-    "scikit-learn",
+    "transformers[torch]==4.48.2",
+    "datasets==3.2.0",
+    "scikit-learn==1.6.1",
     "seaborn",
     "matplotlib",
     "numpy",
-    "librosa==0.9.2",
+    "librosa",
     "soundfile",
     "wandb"
-)
+).add_local_python_source("logger").add_local_python_source("model")
 
 # Hyperparameters and configuration
-BASE_CONFIG = {
-    "model_name": "facebook/w2v-bert-2.0",
+CONFIG = {
+    "model_name": "facebook/wav2vec2-base-960h",
 
     # Three types of dataset are used during in this script: training, eval, and test.
     #
@@ -58,33 +57,48 @@ BASE_CONFIG = {
         "pipecat-ai/human_convcollector_1",
         "pipecat-ai/orpheus_grammar_1",
         "pipecat-ai/orpheus_midfiller_1",
-        "pipecat-ai/orpheus_endfiller_1"
+        "pipecat-ai/orpheus_endfiller_1",
+        "pipecat-ai/chirp3_1",
     ],
     "datasets_test": [], # e.g. "/data/datasets/human_5_filler"
 
     # Training parameters
     "learning_rate": 5e-5,
-    "num_epochs": 10,
-    "train_batch_size": 12,
-    "eval_batch_size": 32,
+    "num_epochs": 3,
+    "train_batch_size": 30,
+    "eval_batch_size": 64,
     "warmup_ratio": 0.2,
-    "weight_decay": 0.05,
-    "gradient_accumulation_steps": 1,
+    "weight_decay": 0.01,
 
     # Evaluation parameters
-    "eval_steps": 50,
-    "save_steps": 50,
-    "logging_steps": 5,
-
-    # Model architecture parameters
-    "num_frozen_layers": 10
+    "eval_steps": 500,
+    "save_steps": 500,
+    "logging_steps": 100,
 }
 
+
 def load_dataset_at(path: str):
+    # Ignore linter errors, this works fine
     if path.startswith('/'):
         return load_from_disk(path)["train"]
     else:
         return load_dataset(path)["train"]
+
+
+def validate_audio_lengths(dataset, dataset_name):
+    """Validate that all audio samples are between 0 and 16 seconds"""
+    for i, sample in enumerate(dataset):
+        audio_array = sample['audio']['array']
+
+        duration = len(audio_array) / 16000
+
+        if duration <= 0:
+            raise ValueError(
+                f"Fatal error: Audio sample {i} in dataset '{dataset_name}' has zero or negative length ({duration} seconds)")
+
+        if duration > 16:
+            raise ValueError(
+                f"Fatal error: Audio sample {i} in dataset '{dataset_name}' exceeds 16 seconds limit ({duration} seconds)")
 
 def prepare_datasets(preprocess_function, config):
     """
@@ -109,6 +123,8 @@ def prepare_datasets(preprocess_function, config):
 
         full_dataset = load_dataset_at(dataset_path)
 
+        validate_audio_lengths(full_dataset, dataset_name)
+
         # Create train/eval/test split (80/10/10)
         dataset_dict = full_dataset.train_test_split(test_size=0.2, seed=42)
         training_splits.append(dataset_dict["train"])
@@ -124,34 +140,59 @@ def prepare_datasets(preprocess_function, config):
     # Load and add the full test datasets
     for dataset_path in datasets_test:
         dataset_name = dataset_path.split("/")[-1]
-        test_splits[dataset_name] = load_dataset_at(dataset_path)
+        test_dataset = load_dataset_at(dataset_path)
 
-    # Apply preprocessing function
+        validate_audio_lengths(test_dataset, dataset_name)
 
-    merged_training_dataset = merged_training_dataset.map(
-        preprocess_function,
-        batched=False,
-        remove_columns=merged_training_dataset.column_names
-    )
+        test_splits[dataset_name] = test_dataset
 
-    merged_eval_dataset = merged_eval_dataset.map(
-        preprocess_function,
-        batched=False,
-        remove_columns=merged_eval_dataset.column_names
-    )
+    def apply_preprocessing(dataset):
+        return dataset.map(
+            preprocess_function,
+            batched=True,
+            batch_size=8,
+            remove_columns=["audio", "endpoint_bool"],
+            num_proc=16
+        )
+
+    merged_training_dataset = apply_preprocessing(merged_training_dataset)
+    merged_eval_dataset = apply_preprocessing(merged_eval_dataset)
 
     for dataset_name, dataset in test_splits.items():
-        test_splits[dataset_name] = dataset.map(
-            preprocess_function,
-            batched=False,
-            remove_columns=dataset.column_names
-        )
+        test_splits[dataset_name] = apply_preprocessing(dataset)
 
     return {
         "training": merged_training_dataset,
         "eval": merged_eval_dataset,
         "test": test_splits
     }
+
+def process_predictions(logits):
+    """
+    Converts raw logits into squeezed probability predictions and binary predictions.
+    """
+    if np.isnan(logits).any() or not np.isfinite(logits).all():
+        raise ValueError("Non-finite or NaN values detected in logits during processing")
+    
+    probs = logits.squeeze()
+    preds = (probs > 0.5).astype(int)
+    
+    return probs, preds
+
+def get_predictions_and_labels(trainer, dataset, metric_key_prefix=None):
+    """
+    Returns tuple:
+        - predictions: Raw prediction output from trainer
+        - labels: Ground truth labels
+        - probs: Squeezed probability predictions
+        - preds: Binary predictions (probs > 0.5)
+    """
+    predictions = trainer.predict(dataset, metric_key_prefix=metric_key_prefix)
+    
+    probs, preds = process_predictions(predictions.predictions)
+    labels = predictions.label_ids
+    
+    return predictions, labels, probs, preds
 
 
 class ExternalEvaluationCallback(TrainerCallback):
@@ -163,168 +204,270 @@ class ExternalEvaluationCallback(TrainerCallback):
         self.trainer = trainer
 
     def on_evaluate(self, args, state, control, **kwargs):
+        accuracies = {}  # Store accuracies for each dataset
+        language_metrics = {}  # Store metrics aggregated by language
+        midfiller_metrics = {}  # Store metrics aggregated by midfiller
 
         for dataset_name, dataset in self.test_datasets.items():
-
-            predictions = self.trainer.predict(dataset, metric_key_prefix=f"test_{dataset_name}")
-            probs = predictions.predictions
-            labels = predictions.label_ids
+            predictions, labels, probs, preds = get_predictions_and_labels(
+                self.trainer, dataset, f"exttest/{dataset_name}"
+            )
 
             metrics = self.compute_metrics((probs, labels))
 
             external_metrics = {
-                f"test_{dataset_name}_{k}": v
+                f"exttest/{dataset_name}_{k}": v
                 for k, v in metrics.items()
             }
 
-            external_metrics[f"test_{dataset_name}_prob_dist"] = wandb.Histogram(probs.squeeze())
+            # Create histogram for probability distribution
+            external_metrics[f"exttest/{dataset_name}_prob_dist"] = wandb.Histogram(probs)
 
-            wandb.log(external_metrics, step=state.global_step)
+            external_metrics[f"train/global_step"] = state.global_step
 
-            print(f"\nExternal Evaluation Metrics ({dataset_name}):")
-            for k, v in external_metrics.items():
-                if isinstance(v, (float, int)):
-                    print(f"{k}: {v:.4f}")
+            # Store accuracy for this dataset
+            accuracies[dataset_name] = metrics["accuracy"]
 
-def log_dataset_statistics(split_name, dataset):
-    """Log detailed statistics about each dataset split."""
+            wandb.log(external_metrics)
 
-    print(f"\n-- Dataset statistics: {split_name} --")
+            # Process category-based metrics
+            self._process_category_metrics(dataset, probs, labels, preds, language_metrics,
+                                           column_name='language', default_value='unknown-error')
+            self._process_category_metrics(dataset, probs, labels, preds, midfiller_metrics,
+                                           column_name='midfiller', default_value='unknown')
 
-    # Basic statistics
-    total_samples = len(dataset)
-    if "labels" in dataset.features:
-        labels = dataset["labels"]
-        positive_samples = sum(1 for label in labels if label == 1)
-        negative_samples = total_samples - positive_samples
-        positive_ratio = positive_samples / total_samples * 100
+        # Log category-based metrics
+        self._log_category_metrics(language_metrics, 'lang', state.global_step)
+        self._log_category_metrics(midfiller_metrics, 'midfiller', state.global_step)
 
-        print(f"  Total samples: {total_samples:,}")
-        print(f"  Positive samples (Complete): {positive_samples:,} ({positive_ratio:.2f}%)")
-        print(f"  Negative samples (Incomplete): {negative_samples:,} ({100 - positive_ratio:.2f}%)")
+        if accuracies:
+            # Log the lowest accuracy across all datasets
+            lowest_accuracy = min(accuracies.values())
+            lowest_accuracy_dataset = min(accuracies.keys(), key=lambda k: accuracies[k])
 
-        # Audio length statistics if available
-        if "audio" in dataset.features:
-            audio_lengths = [len(x["array"]) / 16000 for x in dataset["audio"]]  # Convert to seconds
-            avg_length = sum(audio_lengths) / len(audio_lengths)
-            min_length = min(audio_lengths)
-            max_length = max(audio_lengths)
+            # Calculate overall accuracy with penalty for poor performing datasets
+            accuracy_values = list(accuracies.values())
+            mean_accuracy = sum(accuracy_values) / len(accuracy_values)
 
-            print(f"  Audio statistics (in seconds):")
-            print(f"    Average length: {avg_length:.2f}")
-            print(f"    Min length: {min_length:.2f}")
-            print(f"    Max length: {max_length:.2f}")
-    else:
-        print(f"  (no labels!)")
-        print(f"  Total samples: {total_samples:,}")
+            wandb.log({
+                "exttest/lowest_accuracy": lowest_accuracy,
+                "exttest/lowest_accuracy_dataset": lowest_accuracy_dataset,
+                "exttest/mean_accuracy": mean_accuracy,
+                "exttest/accuracy_variance": np.var(accuracy_values),
+                "train/global_step": state.global_step
+            })
 
-@app.function(
-    image=image,
-    gpu="L4",
-    volumes={"/data": volume},
-    timeout=20000,
-    secrets=[
-        modal.Secret.from_name("wandb-secret"),
-        modal.Secret.from_dict({"MODAL_LOGLEVEL": "DEBUG"})
-    ]
-)
-def training_run(run_number):
-    # Create config with run number
-    today = datetime.now().strftime("%Y-%m-%d")
-    CONFIG = BASE_CONFIG.copy()
-    CONFIG["run_name"] = f"model-v2-{today}__2__run{run_number}"
+            log.info(f"\nOverall accuracy metrics:")
+            log.info(f"  Lowest accuracy across all test datasets: {lowest_accuracy:.4f} ({lowest_accuracy_dataset})")
+            log.info(f"  Mean accuracy: {mean_accuracy:.4f}")
+            log.info(f"  Accuracy variance: {np.var(accuracy_values):.4f}")
 
-    print(f"Starting training run: {CONFIG['run_name']}")
+    def _log_language_metrics(self, language_metrics, global_step):
+        """Compute and log metrics for each language."""
+        language_accuracies = {}
 
-    # Initialize Weights & Biases.
-    wandb_api_key = os.environ.get("WANDB_API_KEY")
-    if not wandb_api_key:
-        raise ValueError("WANDB_API_KEY environment variable not set")
-    wandb.init(project="speech-endpointing", name=CONFIG["run_name"], config=CONFIG)
+        for lang, data in language_metrics.items():
+            if len(data['labels']) == 0:
+                continue
 
-    # Initialize model and processor using the W2v-BERT 2.0 checkpoint.
-    model = Wav2Vec2BertForSequenceClassification.from_pretrained(CONFIG["model_name"], num_labels=2)
-    processor = AutoFeatureExtractor.from_pretrained(CONFIG["model_name"])
+            # Convert to numpy arrays for metric computation
+            lang_probs = np.array(data['probs'])
+            lang_labels = np.array(data['labels'])
+            lang_preds = np.array(data['preds'])
 
-    # Freeze lower layers of the encoder in the wav2vec2_bert backbone.
-    encoder_layers = model.wav2vec2_bert.encoder.layers
+            # Compute metrics for this language
+            metrics = self.compute_metrics((lang_probs, lang_labels))
 
-    for layer_idx in range(CONFIG["num_frozen_layers"]):
-        for param in encoder_layers[layer_idx].parameters():
-            param.requires_grad = False
+            # Log language-specific metrics
+            language_specific_metrics = {
+                f"exttest/lang_{lang}_{k}": v
+                for k, v in metrics.items()
+            }
 
-    # Define a preprocessing function that processes one example at a time.
-    def preprocess_function(example):
-        # Extract the audio array.
-        audio_array = example["audio"]["array"]
-        label = 1 if example["endpoint_bool"] else 0
+            # Add probability distribution histogram for this language
+            language_specific_metrics[f"exttest/lang_{lang}_prob_dist"] = wandb.Histogram(lang_probs)
+            language_specific_metrics[f"exttest/lang_{lang}_sample_count"] = len(lang_labels)
+            language_specific_metrics["train/global_step"] = global_step
 
-        # print("Audio array shape:", audio_array.shape)
+            # Store accuracy for cross-language analysis
+            language_accuracies[lang] = metrics["accuracy"]
 
-        inputs = processor(
-            audio_array,
-            sampling_rate=16000,
-            padding="max_length",
-            truncation=True,
-            max_length= 800, # raw sample length * sample rate / downsample factor
-            return_attention_mask=True,
-            return_tensors="pt"
-        )
+            wandb.log(language_specific_metrics)
 
-        # Remove extra batch dimension (if necessary)
-        for key in inputs.keys():
-            inputs[key] = inputs[key].squeeze(0)
+            log.info(f"Language {lang} metrics: accuracy={metrics['accuracy']:.4f}, "
+                     f"precision={metrics['precision']:.4f}, recall={metrics['recall']:.4f}, "
+                     f"f1={metrics['f1']:.4f}, samples={len(lang_labels)}")
 
-        # Add the label.
-        inputs["labels"] = label
-        return inputs
+        # Log cross-language summary metrics
+        if language_accuracies:
+            min_lang_accuracy = min(language_accuracies.values())
+            max_lang_accuracy = max(language_accuracies.values())
+            mean_lang_accuracy = sum(language_accuracies.values()) / len(language_accuracies)
 
-    datasets = prepare_datasets(preprocess_function, CONFIG)
+            # Find best and worst performing languages
+            best_lang = max(language_accuracies.keys(), key=lambda k: language_accuracies[k])
+            worst_lang = min(language_accuracies.keys(), key=lambda k: language_accuracies[k])
 
-    log_dataset_statistics("training", datasets["training"])
-    log_dataset_statistics("eval", datasets["eval"])
+            wandb.log({
+                "exttest/lang_min_accuracy": min_lang_accuracy,
+                "exttest/lang_max_accuracy": max_lang_accuracy,
+                "exttest/lang_mean_accuracy": mean_lang_accuracy,
+                "exttest/lang_accuracy_range": max_lang_accuracy - min_lang_accuracy,
+                "exttest/lang_accuracy_std": np.std(list(language_accuracies.values())),
+                "exttest/best_performing_language": best_lang,
+                "exttest/worst_performing_language": worst_lang,
+                "exttest/languages_evaluated": len(language_accuracies),
+                "train/global_step": global_step
+            })
 
-    for dataset_name, dataset in datasets["test"].items():
-        log_dataset_statistics(dataset_name, dataset)
+            log.info(f"\nLanguage performance summary:")
+            log.info(f"  Best performing language: {best_lang} ({language_accuracies[best_lang]:.4f})")
+            log.info(f"  Worst performing language: {worst_lang} ({language_accuracies[worst_lang]:.4f})")
+            log.info(f"  Mean accuracy across languages: {mean_lang_accuracy:.4f}")
+            log.info(f"  Accuracy range: {max_lang_accuracy - min_lang_accuracy:.4f}")
 
-    def compute_metrics(eval_pred):
-        logits, labels = eval_pred
-        preds = np.argmax(logits, axis=1)
+    def _process_category_metrics(self, dataset, probs, labels, preds, category_metrics,
+                                  column_name, default_value):
+        """Generic method to process and accumulate metrics by any categorical column."""
+        # Check if the dataset has the specified column
+        if column_name in dataset.column_names:
+            categories = dataset[column_name]
+        else:
+            # Use default value if column doesn't exist
+            categories = [default_value] * len(dataset)
 
-        metrics = {
-            "accuracy": accuracy_score(labels, preds),
-            "precision": precision_score(labels, preds, zero_division=0),
-            "recall": recall_score(labels, preds, zero_division=0),
-            "f1": f1_score(labels, preds, zero_division=0)
-        }
+        # Group by category
+        for i, category in enumerate(categories):
+            # Convert to string for consistency (handles booleans, etc.)
+            category_key = str(category).lower() if category is not None else default_value
 
-        tn, fp, fn, tp = confusion_matrix(labels, preds).ravel()
-        metrics.update({
-            "pred_positives": tp + fp,
-            "pred_negatives": tn + fn,
-            "true_positives": tp,
-            "false_positives": fp,
-            "true_negatives": tn,
-            "false_negatives": fn,
-        })
+            if category_key not in category_metrics:
+                category_metrics[category_key] = {
+                    'probs': [],
+                    'labels': [],
+                    'preds': []
+                }
 
-        return metrics
+            category_metrics[category_key]['probs'].append(probs[i])
+            category_metrics[category_key]['labels'].append(labels[i])
+            category_metrics[category_key]['preds'].append(preds[i])
 
-    def evaluate_and_plot(trainer, dataset, split_name):
-        print(f"\nEvaluating on {split_name} set...")
-        metrics = trainer.evaluate(eval_dataset=dataset)
+    def _log_category_metrics(self, category_metrics, metric_prefix, global_step):
+        """Generic method to compute and log metrics for any category grouping."""
+        category_accuracies = {}
 
-        predictions = trainer.predict(dataset)
-        logits = predictions.predictions # shape: (num_samples, num_classes)
-        preds = np.argmax(logits, axis=1) # shape: (num_samples,)
-        labels = predictions.label_ids
+        for category, data in category_metrics.items():
+            if len(data['labels']) == 0:
+                continue
 
-        output_dir = os.path.join(trainer.args.output_dir, "evaluation_plots")
-        os.makedirs(output_dir, exist_ok=True)
+            # Convert to numpy arrays for metric computation
+            cat_probs = np.array(data['probs'])
+            cat_labels = np.array(data['labels'])
 
-        # Plot and save confusion matrix
-        plt.figure(figsize=(8, 6))
-        sns.heatmap(confusion_matrix(labels, preds), annot=True, fmt='d', cmap='Blues',
+            # Compute metrics for this category
+            metrics = self.compute_metrics((cat_probs, cat_labels))
+
+            # Log category-specific metrics
+            category_specific_metrics = {
+                f"exttest/{metric_prefix}_{category}_{k}": v
+                for k, v in metrics.items()
+            }
+
+            # Add probability distribution histogram for this category
+            category_specific_metrics[f"exttest/{metric_prefix}_{category}_prob_dist"] = wandb.Histogram(cat_probs)
+            category_specific_metrics[f"exttest/{metric_prefix}_{category}_sample_count"] = len(cat_labels)
+            category_specific_metrics["train/global_step"] = global_step
+
+            # Store accuracy for cross-category analysis
+            category_accuracies[category] = metrics["accuracy"]
+
+            wandb.log(category_specific_metrics)
+
+            log.info(f"{metric_prefix.capitalize()} {category} metrics: accuracy={metrics['accuracy']:.4f}, "
+                     f"precision={metrics['precision']:.4f}, recall={metrics['recall']:.4f}, "
+                     f"f1={metrics['f1']:.4f}, samples={len(cat_labels)}")
+
+        # Log cross-category summary metrics
+        if category_accuracies:
+            min_accuracy = min(category_accuracies.values())
+            max_accuracy = max(category_accuracies.values())
+            mean_accuracy = sum(category_accuracies.values()) / len(category_accuracies)
+
+            # Find best and worst performing categories
+            best_category = max(category_accuracies.keys(), key=lambda k: category_accuracies[k])
+            worst_category = min(category_accuracies.keys(), key=lambda k: category_accuracies[k])
+
+            summary_metrics = {
+                f"exttest/{metric_prefix}_min_accuracy": min_accuracy,
+                f"exttest/{metric_prefix}_max_accuracy": max_accuracy,
+                f"exttest/{metric_prefix}_mean_accuracy": mean_accuracy,
+                f"exttest/{metric_prefix}_accuracy_range": max_accuracy - min_accuracy,
+                f"exttest/best_performing_{metric_prefix}": best_category,
+                f"exttest/worst_performing_{metric_prefix}": worst_category,
+                f"exttest/{metric_prefix}_categories_evaluated": len(category_accuracies),
+                "train/global_step": global_step
+            }
+
+            # Add standard deviation for categories
+            if len(category_accuracies) > 1:
+                summary_metrics[f"exttest/{metric_prefix}_accuracy_std"] = np.std(list(category_accuracies.values()))
+
+            wandb.log(summary_metrics)
+
+            # Log summary information
+            category_type = metric_prefix.replace('_', ' ')
+            log.info(f"\n{category_type.capitalize()} performance summary:")
+            log.info(f"  Best performing {category_type}: {best_category} ({category_accuracies[best_category]:.4f})")
+            log.info(
+                f"  Worst performing {category_type}: {worst_category} ({category_accuracies[worst_category]:.4f})")
+            log.info(f"  Mean accuracy across {category_type}s: {mean_accuracy:.4f}")
+            log.info(f"  Accuracy range: {max_accuracy - min_accuracy:.4f}")
+
+        # Log category distribution percentages
+        if category_metrics:
+            total_samples = sum(len(data['labels']) for data in category_metrics.values())
+            distribution_metrics = {
+                f"exttest/{metric_prefix}_{category}_percentage": (len(
+                    category_metrics[category]['labels']) / total_samples) * 100
+                for category in category_metrics.keys()
+            }
+            distribution_metrics["train/global_step"] = global_step
+            wandb.log(distribution_metrics)
+
+def compute_metrics(eval_pred):
+    logits, labels = eval_pred
+
+    probs, preds = process_predictions(logits)
+
+    tn, fp, fn, tp = confusion_matrix(labels, preds).ravel()
+
+    return {
+        "accuracy": accuracy_score(labels, preds),
+        "precision": precision_score(labels, preds, zero_division="warn"),
+        "recall": recall_score(labels, preds, zero_division="warn"),
+        "f1": f1_score(labels, preds, zero_division="warn"),
+        "pred_positives": tp + fp,
+        "pred_negatives": tn + fn,
+        "true_positives": tp,
+        "false_positives": fp,
+        "true_negatives": tn,
+        "false_negatives": fn,
+    }
+
+def evaluate_and_plot(trainer, dataset, split_name):
+    log.info(f"Evaluating on {split_name} set...")
+    metrics = trainer.evaluate(eval_dataset=dataset)
+
+    predictions, labels, probs, preds = get_predictions_and_labels(trainer, dataset)
+
+    output_dir = os.path.join(trainer.args.output_dir, "evaluation_plots")
+    os.makedirs(output_dir, exist_ok=True)
+
+    # Plot and save confusion matrix
+    plt.figure(figsize=(8, 6))
+    try:
+        cm = confusion_matrix(labels, preds)
+        sns.heatmap(cm, annot=True, fmt='d', cmap='Blues',
                     xticklabels=['Incomplete', 'Complete'],
                     yticklabels=['Incomplete', 'Complete'])
         plt.title(f'Confusion Matrix - {split_name.capitalize()} Set')
@@ -333,15 +476,16 @@ def training_run(run_number):
         plt.tight_layout()
         confusion_matrix_path = os.path.join(output_dir, f'confusion_matrix_{split_name}.png')
         plt.savefig(confusion_matrix_path)
-        wandb.log({f"confusion_matrix_{split_name}": wandb.Image(confusion_matrix_path)})
         plt.close()
-        print(f"Saved confusion matrix to {confusion_matrix_path}")
+        log.info(f"Saved confusion matrix to {confusion_matrix_path}")
+    except Exception as e:
+        log.error(f"Could not create confusion matrix for {split_name}: {e}")
+        confusion_matrix_path = None
 
-        # Plot and save probability distribution
-        plt.figure(figsize=(10, 6))
-        # plt.hist(probs.squeeze(), bins=50, alpha=0.5, label='All Samples')
-        # plt.hist(probs.squeeze()[labels == 1], bins=50, alpha=0.5, label='True Complete')
-        plt.hist(logits[:,1], bins=50, alpha=0.5, label='Probability of Class 1')
+    # Plot and save probability distribution
+    plt.figure(figsize=(10, 6))
+    try:
+        plt.hist(probs, bins=50, alpha=0.5, label='Probability of Complete')
         plt.title(f'Distribution of Completion Probabilities - {split_name.capitalize()} Set')
         plt.xlabel('Probability of Complete')
         plt.ylabel('Count')
@@ -349,29 +493,102 @@ def training_run(run_number):
         plt.tight_layout()
         prob_dist_path = os.path.join(output_dir, f'probability_distribution_{split_name}.png')
         plt.savefig(prob_dist_path)
-        wandb.log({f"probability_distribution_{split_name}": wandb.Image(prob_dist_path)})
         plt.close()
-        print(f"Saved probability distribution to {prob_dist_path}")
+        log.info(f"Saved probability distribution to {prob_dist_path}")
+    except Exception as e:
+        log.error(f"Could not create probability distribution for {split_name}: {e}")
+        prob_dist_path = None
 
-        # Log additional metrics to wandb
-        wandb.log({
-            f"{split_name}_accuracy": metrics["eval_accuracy"],
-            f"{split_name}_precision": metrics["eval_precision"],
-            f"{split_name}_recall": metrics["eval_recall"],
-            f"{split_name}_f1": metrics["eval_f1"]
-        })
+    # Log additional metrics to wandb
+    wandb_metrics = {
+        f"final/{split_name}_accuracy": metrics["eval_accuracy"],
+        f"final/{split_name}_precision": metrics["eval_precision"],
+        f"final/{split_name}_recall": metrics["eval_recall"],
+        f"final/{split_name}_f1": metrics["eval_f1"],
+    }
 
-        return metrics, predictions
+    if confusion_matrix_path:
+        wandb_metrics[f"final/confusion_matrix_{split_name}"] = wandb.Image(confusion_matrix_path)
+    if prob_dist_path:
+        wandb_metrics[f"final/probability_distribution_{split_name}"] = wandb.Image(prob_dist_path)
 
-    # Set training arguments.
-    current_time = datetime.now().strftime("%Y_%m_%d_%H_%M_%S")
+    wandb.log(wandb_metrics)
+
+    return metrics, predictions
+
+@app.function(
+    image=image,
+    gpu="L40S",
+    memory=16384,
+    cpu=16.0,
+    volumes={"/data": volume},
+    timeout=86400,
+    secrets=[modal.Secret.from_name("wandb-secret")],
+)
+def training_run(run_number):
+
+    log_dependencies()
+
+    now = datetime.now().strftime("%Y-%m-%d_%H:%M")
+    CONFIG["run_name"] = f"v2-linearclassifier-{now}_run{run_number}"
+
+    log.info(f"Starting training run: {CONFIG['run_name']}")
+
+    wandb_api_key = os.environ.get("WANDB_API_KEY")
+    if not wandb_api_key:
+        raise ValueError("WANDB_API_KEY environment variable not set")
+
+    wandb_run = wandb.init(
+        project="speech-endpointing",
+        name=CONFIG["run_name"],
+        config=CONFIG
+    )
+
+    wandb_run.define_metric(name="exttest/*", step_metric="train/global_step")
+
+    model = Wav2Vec2ForEndpointing.from_pretrained(CONFIG["model_name"], num_labels=1)
+    processor = Wav2Vec2Processor.from_pretrained(CONFIG["model_name"])
+
+    log_model_structure(model, CONFIG)
+
+    def preprocess_function(batch):
+        audio_arrays = [x["array"] for x in batch["audio"]]
+        labels = [1 if lb else 0 for lb in batch["endpoint_bool"]]
+
+        inputs = processor(
+            audio_arrays,
+            sampling_rate=16000,
+            padding="max_length",
+            truncation=True,
+            max_length=16000 * 16,
+            return_attention_mask=True,
+            return_tensors="pt"
+        )
+        inputs["labels"] = labels
+
+        inputs["language"] = batch["language"] if "language" in batch else (["eng"] * len(labels))
+        if "midfiller" in batch:
+            inputs["midfiller"] = batch["midfiller"]
+        if "endfiller" in batch:
+            inputs["endfiller"] = batch["endfiller"]
+        
+        return inputs
+
+    datasets = prepare_datasets(preprocess_function, CONFIG)
+
+    log_dataset_statistics("training", datasets["training"])
+    log_dataset_statistics("eval", datasets["eval"])
+
+    for dataset_name, dataset in datasets["test"].items():
+        log_dataset_statistics("test_" + dataset_name, dataset)
+
     training_args = TrainingArguments(
-        output_dir=f"/data/output/{CONFIG['run_name']}-{current_time}",
+        output_dir=f"/data/output/{CONFIG['run_name']}",
         per_device_train_batch_size=CONFIG["train_batch_size"],
         per_device_eval_batch_size=CONFIG["eval_batch_size"],
         num_train_epochs=CONFIG["num_epochs"],
-        evaluation_strategy="steps",
-        gradient_accumulation_steps=CONFIG["gradient_accumulation_steps"],
+        eval_strategy=IntervalStrategy.STEPS,
+        gradient_accumulation_steps=1,
         eval_steps=CONFIG["eval_steps"],
         save_steps=CONFIG["save_steps"],
         logging_steps=CONFIG["logging_steps"],
@@ -384,23 +601,22 @@ def training_run(run_number):
         lr_scheduler_type="cosine",
         report_to=["wandb"],
         max_grad_norm=1.0,
-        dataloader_num_workers=5,
+        dataloader_num_workers=16,
         dataloader_prefetch_factor=4,
         dataloader_pin_memory=True,
-        tf32=True,
         fp16=True,
+        disable_tqdm=True,
     )
 
-    # Instantiate the Trainer.
     trainer = Trainer(
         model=model,
         args=training_args,
         train_dataset=datasets["training"],
         eval_dataset=datasets["eval"],
-        tokenizer=processor,
         compute_metrics=compute_metrics,
         callbacks=[
             EarlyStoppingCallback(early_stopping_patience=5),
+            ProgressLoggerCallback(log_interval=CONFIG["logging_steps"])
         ]
     )
 
@@ -410,31 +626,25 @@ def training_run(run_number):
         trainer=trainer
     ))
 
-    def log_timestamp():
-        return datetime.now().strftime("%Y-%m-%d %H:%M:%S")
-
-    # Train the model
-    print(f"\n[{log_timestamp()}] Starting training...")
     trainer.train()
 
     # Evaluate on validation set
-    print(f"\n[{log_timestamp()}] Final eval set evaluation:")
+    log.info(f"Final eval set evaluation:")
     evaluate_and_plot(trainer, datasets["eval"], "eval")
 
     # Evaluate on test set
     for dataset_name, dataset in datasets["test"].items():
-        print(f"\n[{log_timestamp()}] Test set evaluation ({dataset_name}):")
+        log.info(f"Test set evaluation ({dataset_name}):")
         evaluate_and_plot(trainer, dataset, dataset_name)
 
     # Save the final model and processor.
     final_save_path = f"{training_args.output_dir}/final_model"
     trainer.save_model(final_save_path)
     processor.save_pretrained(final_save_path)
-    print(f"\nModel saved to {final_save_path}")
+    log.info(f"Model saved to {final_save_path}")
 
     wandb.finish()
 
 @app.local_entrypoint()
 def main(run_number: str = "00"):
-    print(f"Initiating training run {run_number}")
     training_run.remote(run_number)

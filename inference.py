@@ -1,12 +1,13 @@
 import torch
-from transformers import Wav2Vec2BertForSequenceClassification, AutoFeatureExtractor
+from transformers import Wav2Vec2Processor
+from model import Wav2Vec2ForEndpointing
 
-# MODEL_PATH = "model-v1"
-MODEL_PATH = "pipecat-ai/smart-turn"
+# MODEL_PATH = "path/to/your/trained/model"
+MODEL_PATH = "pipecat-ai/smart-turn-v2"
 
 # Load model and processor
-model = Wav2Vec2BertForSequenceClassification.from_pretrained(MODEL_PATH)
-processor = AutoFeatureExtractor.from_pretrained(MODEL_PATH)
+model = Wav2Vec2ForEndpointing.from_pretrained(MODEL_PATH)
+processor = Wav2Vec2Processor.from_pretrained(MODEL_PATH)
 
 # Set model to evaluation mode and move to GPU if available
 device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
@@ -24,7 +25,7 @@ def predict_endpoint(audio_array):
     Returns:
         Dictionary containing prediction results:
         - prediction: 1 for complete, 0 for incomplete
-        - probability: Probability of completion class
+        - probability: Probability of completion (sigmoid output)
     """
 
     # Process audio
@@ -33,9 +34,9 @@ def predict_endpoint(audio_array):
         sampling_rate=16000,
         padding="max_length",
         truncation=True,
-        max_length=800,  # Maximum length as specified in training
+        max_length=16000 * 16,  # 16 seconds at 16kHz as specified in training
         return_attention_mask=True,
-        return_tensors="pt",
+        return_tensors="pt"
     )
 
     # Move inputs to device
@@ -44,16 +45,26 @@ def predict_endpoint(audio_array):
     # Run inference
     with torch.no_grad():
         outputs = model(**inputs)
-        logits = outputs.logits
 
-        # Get probabilities using softmax
-        probabilities = torch.nn.functional.softmax(logits, dim=1)
-        completion_prob = probabilities[0, 1].item()  # Probability of class 1 (Complete)
+        # The model returns sigmoid probabilities directly in the logits field
+        probability = outputs["logits"][0].item()
 
         # Make prediction (1 for Complete, 0 for Incomplete)
-        prediction = 1 if completion_prob > 0.5 else 0
+        prediction = 1 if probability > 0.5 else 0
 
     return {
         "prediction": prediction,
-        "probability": completion_prob,
+        "probability": probability,
     }
+
+
+# Example usage
+if __name__ == "__main__":
+    import numpy as np
+
+    # Create a dummy audio array for testing (1 second of random audio)
+    dummy_audio = np.random.randn(16000).astype(np.float32)
+
+    result = predict_endpoint(dummy_audio)
+    print(f"Prediction: {result['prediction']}")
+    print(f"Probability: {result['probability']:.4f}")
