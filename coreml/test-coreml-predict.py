@@ -1,33 +1,39 @@
-import coremltools as ct
-import numpy as np
 import time
 
+import coremltools as ct
+import numpy as np
+from transformers import Wav2Vec2Processor
+
 MODEL_PATH = "smart_turn_classifier.mlpackage"
+TORCH_MODEL_PATH = "pipecat-ai/smart-turn-v2"
 
-print("Loading model")
+print("Loading Core ML model …")
 start_time = time.perf_counter()
-model = ct.models.MLModel(MODEL_PATH)
-print(f"Model loaded in {time.perf_counter() - start_time} seconds")
+mlmodel = ct.models.MLModel(MODEL_PATH)
+print(f"Model loaded in {time.perf_counter() - start_time:.2f}s")
 
-input_features_shape = [1, 400, 160]
-attention_mask_shape = [1, 400]
+# Create a random 8-second audio clip at 16 kHz
+audio_random = np.random.randn(16000 * 8).astype(np.float32)
 
-input_features = np.random.rand(*input_features_shape)
-attention_mask = np.ones(attention_mask_shape)
+processor = Wav2Vec2Processor.from_pretrained(TORCH_MODEL_PATH)
+inputs = processor(
+    audio_random,
+    sampling_rate=16000,
+    padding="max_length",
+    truncation=True,
+    max_length=16000 * 16,
+    return_attention_mask=True,
+    return_tensors="np",
+)
 
-print("Testing inference time")
+print("Testing inference time …")
 times = []
 for _ in range(10):
-    start_time = time.perf_counter()
-    output_dict = model.predict(
-        {
-            "input_features": input_features,
-            "attention_mask": attention_mask,
-        }
-    )
-    end_time = time.perf_counter()
-    times.append(end_time - start_time)
+    start = time.perf_counter()
+    output = mlmodel.predict(dict(inputs))
+    times.append(time.perf_counter() - start)
 
-print(f"Max: {max(times) * 1000:.2f}ms")
-print(f"Min: {min(times) * 1000:.2f}ms")
-print(f"Median: {np.median(times) * 1000:.2f}ms")
+print(f"Max: {max(times) * 1000:.2f} ms")
+print(f"Min: {min(times) * 1000:.2f} ms")
+print(f"Median: {np.median(times) * 1000:.2f} ms")
+print("Sample output:", output)
