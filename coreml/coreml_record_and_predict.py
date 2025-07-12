@@ -16,7 +16,7 @@ FORMAT = pyaudio.paInt16
 CHANNELS = 1
 STOP_MS = 1000
 PRE_SPEECH_MS = 200
-MAX_DURATION_SECONDS = 16  # Maximum duration for the W2v-BERT model
+MAX_DURATION_SECONDS = 16  # Maximum duration (seconds) compatible with Core ML export
 VAD_THRESHOLD = 0.7  # Threshold for speech detection
 TEMP_OUTPUT_WAV = "temp_output.wav"
 
