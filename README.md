@@ -17,6 +17,8 @@ This is a truly open model (BSD 2-clause license). Anyone can use, fork, and con
 
 Smart Turn v2 supports 14 different languages, and was trained on a range of synthetic and human data. Performance has also increased 3x since the first version, and we're hopeful that this can be optimized even further.
 
+Currently supported languages: 🇬🇧 🇺🇸 English, 🇫🇷 French, 🇩🇪 German, 🇪🇸 Spanish, 🇵🇹 Portuguese, 🇨🇳 Chinese, 🇯🇵 Japanese, 🇮🇳 Hindi, 🇮🇹 Italian, 🇰🇷 Korean, 🇳🇱 Dutch, 🇵🇱 Polish, 🇷🇺 Russian, and 🇹🇷 Turkish.
+
  ## Run the model locally
 
 Set up the environment.
