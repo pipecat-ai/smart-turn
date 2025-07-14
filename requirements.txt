@@ -1,7 +1,7 @@
 torch
-transformers[torch]
-datasets
-scikit-learn
+transformers[torch]==4.48.2
+datasets==3.2.0
+scikit-learn==1.6.1
 seaborn
 matplotlib
 numpy
