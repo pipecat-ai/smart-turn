@@ -1,5 +1,5 @@
 > [!NOTE]
-> Contribute to model development. Generate turn detection data by playing the [turn training games](https://turn-training.pipecat.ai/)
+> Contribute to model development. Generate turn detection data by playing the [turn training games](https://turn-training.pipecat.ai/), or help improve the quality of existing training data using the [classification tool](https://smart-turn-dataset.pipecat.ai/).
 
 # Smart turn detection
 
