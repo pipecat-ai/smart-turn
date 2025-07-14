@@ -50,7 +50,7 @@ Run a command-line utility that streams audio from the system microphone, detect
 # It will take about 30 seconds to start up the first time.
 #
 
-# "Vocabulary" is limited. Try:
+# Try:
 #
 #   - "I can't seem to, um ..."
 #   - "I can't seem to, um, find the return label."
@@ -76,6 +76,8 @@ Medium-term goals:
 ## Model architecture
 
 Smart Turn v2 uses Wav2Vec2 as a base, with a linear classifier layer. The model is transformer-based and has approximately 95M parameters.
+
+We have experimented with multiple architectures and base models, including wav2vec2-BERT, LSTM, and additional transformer classifier layers. We've found that Wav2Vec2 with a linear classifier gives the best accuracy, however model architecture is still an open area of investigation. 
 
 ### Links
 
