@@ -5,7 +5,7 @@ from model import Wav2Vec2ForEndpointing
 import coremltools as ct
 import numpy as np
 
-MODEL_PATH = "smart-turn-v2"
+MODEL_PATH = "pipecat-ai/smart-turn-v2"
 
 # Load model and processor
 model = Wav2Vec2ForEndpointing.from_pretrained(MODEL_PATH)
