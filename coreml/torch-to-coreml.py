@@ -73,6 +73,7 @@ print("Successfully traced the model")
 print("Exporting to CoreML...")
 
 # Convert to CoreML
+# First convert in FP32
 coreml_model = ct.convert(
     model_for_conversion,
     inputs=[
@@ -85,12 +86,9 @@ coreml_model = ct.convert(
     outputs=[ct.TensorType(name="logits", dtype=np.float32)],
     minimum_deployment_target=ct.target.iOS15,
     compute_units=ct.ComputeUnit.ALL,
-    # todo: Try to make a quantized version work. currently, commenting out this line
-    # destroys prediction accuracy. By default, coremltools quantizes to FLOAT16, but
-    # either our model is very sensitive to quantization or there are issues with how
-    # quantization is implemented. There are overflow warnings during conversion that
-    # may just be bugs that can be fixed in the coremltools operator implementations.
     compute_precision=ct.precision.FLOAT32,
+    # Export to FP16 hangs forever?
+    # compute_precision=ct.precision.FLOAT16,
 )
 
 # Set model metadata
