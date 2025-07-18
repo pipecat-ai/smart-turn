@@ -10,6 +10,12 @@ from collections import OrderedDict
 import os
 import numpy as np
 from pathlib import Path
+import argparse
+import sys
+
+ROOT = Path(__file__).resolve().parents[1]
+DEFAULT_MODEL_DIR = ROOT / "v2-model"
+DEFAULT_ONNX_DIR = ROOT / "smart-turn-v2-onnx"
 
 class DummyAttentionMaskGenerator(DummyInputGenerator):
     """
@@ -193,23 +199,21 @@ def verify_onnx_model(model, onnx_model_path, feature_extractor):
     print("-" * 50)
 
 
-def main():
-    model_path = "./v2-model"
-    output_path = Path("./smart-turn-v2-onnx/")
+def main(model_path: Path, output_path: Path):
     onnx_model_file = output_path / "model.onnx"
     
-    if not os.path.exists(model_path):
+    if not model_path.exists():
         print(f"Error: Model directory not found at '{model_path}'")
         return
 
     print(f"Loading custom model from: {model_path}")
 
-    config = AutoConfig.from_pretrained(model_path)
+    config = AutoConfig.from_pretrained(str(model_path))
     config.register_for_auto_class("AutoModelForAudioClassification")
     Wav2Vec2ForEndpointing.register_for_auto_class("AutoModelForAudioClassification")
 
-    model = Wav2Vec2ForEndpointing.from_pretrained(model_path, config=config)
-    feature_extractor = AutoFeatureExtractor.from_pretrained(model_path)
+    model = Wav2Vec2ForEndpointing.from_pretrained(str(model_path), config=config)
+    feature_extractor = AutoFeatureExtractor.from_pretrained(str(model_path))
     
     model.config.sampling_rate = feature_extractor.sampling_rate # this is so the attribute sampling_rate can be found
     model.config.dummy_audio_duration = 2.0 # 2-second dummy clip
@@ -233,8 +237,18 @@ def main():
 
 
 if __name__ == "__main__":
+    parser = argparse.ArgumentParser(description="Export Smart-Turn model to ONNX")
+    parser.add_argument("--model", default=os.getenv("SMART_TURN_MODEL", DEFAULT_MODEL_DIR), help="Path to fine-tuned model directory")
+    parser.add_argument("--out",   default=os.getenv("SMART_TURN_ONNX", DEFAULT_ONNX_DIR), help="Directory to write ONNX model")
+    args = parser.parse_args()
+
     try:
-        import onnxruntime
+        import onnxruntime  # noqa: F401 – check availability
     except ImportError:
-        print("NOTE: This script requires 'onnxruntime'. Install it with 'pip install onnxruntime'")
-    main()
+        print("❌  onnxruntime not installed.  pip install onnxruntime")
+        sys.exit(1)
+
+    out_dir = Path(args.out)
+    out_dir.mkdir(parents=True, exist_ok=True)
+
+    main(Path(args.model), out_dir)
