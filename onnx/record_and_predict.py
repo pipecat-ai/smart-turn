@@ -6,6 +6,10 @@ import sys
 import time
 import torch
 from scipy.io import wavfile
+from pathlib import Path
+
+# Ensure sibling directory is on path for import
+sys.path.append(str(Path(__file__).resolve().parent))
 
 # Import the ONNX inference helper (mirrors structure of inference.py)
 from onnx_inference import predict_endpoint, RATE  # RATE reused for consistency
