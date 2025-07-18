@@ -604,7 +604,7 @@ def training_run(run_number):
         dataloader_num_workers=16,
         dataloader_prefetch_factor=4,
         dataloader_pin_memory=True,
-        fp16=True,
+        tf32=True,
         disable_tqdm=True,
     )
 
