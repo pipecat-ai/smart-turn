@@ -9,6 +9,7 @@ scripts can simply do:
 and get the same dictionary-style result.
 """
 import os
+import sys
 from pathlib import Path
 from typing import Dict
 
@@ -17,8 +18,13 @@ import onnxruntime as ort
 from transformers import Wav2Vec2Processor
 import time
 
-MODEL_HUB_PATH: str = os.getenv("SMART_TURN_MODEL", "pipecat-ai/smart-turn-v2")
-MODEL_PATH_ONNX: str = os.getenv("SMART_TURN_ONNX", "./smart-turn-v2-onnx/model.onnx")
+# Determine project root (parent of this 'onnx' directory)
+ROOT = Path(__file__).resolve().parents[1]
+DEFAULT_ONNX_DIR = ROOT / "smart-turn-v2-onnx"
+DEFAULT_MODEL_DIR = ROOT / "v2-model"
+
+MODEL_HUB_PATH: str = os.getenv("SMART_TURN_MODEL", str(DEFAULT_MODEL_DIR))
+MODEL_PATH_ONNX: str = os.getenv("SMART_TURN_ONNX", str(DEFAULT_ONNX_DIR / "model.onnx"))
 RATE: int = 16000
 MAX_DURATION_SECONDS: int = 16
 PREDICTION_THRESHOLD: float = 0.5
