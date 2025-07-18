@@ -1,6 +1,6 @@
-# Smart-Turn – ONNX Toolkit
+# Smart-Turn – ONNX
 
-This folder contains everything you need to
+Provides ability to: 
 
 1. export the fine-tuned **Smart-Turn** endpointing model to ONNX,
 2. run batch/off-line inference, and
