@@ -145,11 +145,14 @@ def process_speech_segment(audio_buffer, speech_start_time, speech_stop_time):
         print(f"Processing speech segment of length {len(segment_audio) / RATE:.2f} seconds...")
 
         # Call the new predict_endpoint function with the audio data
+        start_time = time.perf_counter()
         result = predict_endpoint(segment_audio_resampled)
+        end_time = time.perf_counter()
 
         print("--------")
         print(f"Prediction: {'Complete' if result['prediction'] == 1 else 'Incomplete'}")
         print(f"Probability of complete: {result['probability']:.4f}")
+        print(f"Prediction took {(end_time - start_time) * 1000:.2f}ms seconds")
     else:
         print("Captured empty audio segment, skipping prediction.")
 
