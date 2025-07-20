@@ -9,8 +9,13 @@ MODEL_PATH = "pipecat-ai/smart-turn-v2"
 model = Wav2Vec2ForEndpointing.from_pretrained(MODEL_PATH)
 processor = Wav2Vec2Processor.from_pretrained(MODEL_PATH)
 
-# Set model to evaluation mode and move to GPU if available
-device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
+# Set model to evaluation mode and move to platform-optimized backend if available.
+# MPS for Apple silicon, CUDA for NVIDIA.
+device = "cpu"
+if torch.backends.mps.is_available():
+    device = "mps"
+elif torch.cuda.is_available():
+    device = "cuda"
 model = model.to(device)
 model.eval()
 
