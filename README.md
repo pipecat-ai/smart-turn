@@ -162,6 +162,24 @@ Currently, the following datasets are used for training and evaluation:
 
 The data is split into training, eval, and testing sets by `train.py`.
 
+## Model Optimization Tools (Experimental)
+
+### Quantization
+
+Reduce model size by ~90%, peak memory usage by ~75%, and potentially improve CPU inference speed. See [Quantization Guide](quantization/GUIDE.md).
+
+```bash
+python quantization/quantize.py --benchmark
+```
+
+### Performance Testing
+
+Compare float32 and quantized model performance. See [Testing Guide](quantization/GUIDE.md).
+
+```bash
+python quantization/benchmark.py --sample-percent 10  # Quick test
+```
+
 ## Things to do
 
 ### Categorize training data

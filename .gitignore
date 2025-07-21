@@ -4,3 +4,11 @@ __pycache__
 .torch_hub
 model-v1
 temp_output.wav
+.DS_Store
+benchmark_results/
+quantized_model/
+
+# UV
+.venv/
+uv.lock
+.uv/

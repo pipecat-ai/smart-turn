@@ -1,0 +1,24 @@
+[project]
+name = "smart-turn"
+version = "0.2.0"
+description = "Smart Turn Detection"
+readme = "README.md"
+requires-python = ">=3.9"
+
+dependencies = [
+    "torch",
+    "transformers[torch]==4.48.2",
+    "datasets==3.2.0",
+    "scikit-learn==1.6.1",
+    "seaborn",
+    "matplotlib",
+    "numpy",
+    "librosa",
+    "soundfile",
+    "wandb",
+    "modal",
+    "pyaudio",
+    "torchaudio",
+    "psutil",
+    "urllib3<2.0",  # Pin to v1 to avoid OpenSSL warnings on macOS
+]

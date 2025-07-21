@@ -11,3 +11,5 @@ wandb
 modal
 pyaudio
 torchaudio
+psutil
+urllib3<2.0  # Pin to v1 to avoid OpenSSL warnings on macOS
