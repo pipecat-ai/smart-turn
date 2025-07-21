@@ -18,7 +18,6 @@ import onnxruntime as ort
 from transformers import Wav2Vec2Processor
 import time
 
-# Determine project root (parent of this 'onnx' directory)
 ROOT = Path(__file__).resolve().parents[1]
 DEFAULT_ONNX_DIR = ROOT / "smart-turn-v2-onnx"
 DEFAULT_MODEL_DIR = ROOT / "v2-model"
@@ -30,6 +29,7 @@ MAX_DURATION_SECONDS: int = 16
 PREDICTION_THRESHOLD: float = 0.5
 
 def _load_session() -> ort.InferenceSession:
+    """Loads the ONNX inference session."""
     providers = ["CPUExecutionProvider"]
     if "CUDAExecutionProvider" in ort.get_available_providers():
         providers.insert(0, "CUDAExecutionProvider")
@@ -64,21 +64,33 @@ def predict_endpoint(audio_array: np.ndarray) -> Dict[str, float]:
         "input_values": inputs["input_values"].cpu().numpy(),
         "attention_mask": inputs["attention_mask"].cpu().numpy().astype(np.int64),
     }
+    
     t0 = time.perf_counter()
-    probs = _session.run(["probabilities"], ort_inputs)[0]
+    
+    logits = _session.run(["logits"], ort_inputs)[0]
+    
     inference_ms = (time.perf_counter() - t0) * 1000.0
-    probability = float(probs[0][0])
+    
+    logit_value = logits[0][0]
+    probability = 1 / (1 + np.exp(-logit_value))
+    
     prediction  = 1 if probability > PREDICTION_THRESHOLD else 0
+    
     return {
         "prediction": prediction,
-        "probability": probability,
+        "probability": float(probability),
         "inference_ms": inference_ms,
     }
 
 
 if __name__ == "__main__":
-    import numpy.random as npr
-
-    dummy = npr.randn(RATE * 2).astype(np.float32)
-    out = predict_endpoint(dummy)
-    print(out) 
+    dummy_audio = np.random.randn(RATE * 2).astype(np.float32)
+    
+    print("\nRunning prediction on dummy audio...")
+    output = predict_endpoint(dummy_audio)
+    
+    print("\n--- Prediction Result ---")
+    print(f"  Prediction: {'Endpoint' if output['prediction'] == 1 else 'Not Endpoint'}")
+    print(f"  Probability: {output['probability']:.4f}")
+    print(f"  Inference Time: {output['inference_ms']:.2f} ms")
+    print("-------------------------\n")
