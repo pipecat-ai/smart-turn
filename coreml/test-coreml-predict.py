@@ -4,12 +4,12 @@ import coremltools as ct
 import numpy as np
 from transformers import Wav2Vec2Processor
 
-MODEL_PATH = "smart_turn_classifier.mlpackage"
+MODEL_PATH = "smart_turn_classifier_fp16.mlpackage"
 TORCH_MODEL_PATH = "pipecat-ai/smart-turn-v2"
 
 print("Loading Core ML model …")
 start_time = time.perf_counter()
-mlmodel = ct.models.MLModel(MODEL_PATH)
+mlmodel = ct.models.MLModel(MODEL_PATH, compute_units=ct.ComputeUnit.CPU_ONLY)
 print(f"Model loaded in {time.perf_counter() - start_time:.2f}s")
 
 # Create a random 8-second audio clip at 16 kHz
