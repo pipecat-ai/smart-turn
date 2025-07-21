@@ -14,6 +14,10 @@ import argparse
 import sys
 
 ROOT = Path(__file__).resolve().parents[1]
+sys.path.append(str(ROOT))
+
+from model import Wav2Vec2ForEndpointing 
+
 DEFAULT_MODEL_DIR = ROOT / "v2-model"
 DEFAULT_ONNX_DIR = ROOT / "smart-turn-v2-onnx"
 
@@ -43,84 +47,6 @@ class DummyAttentionMaskGenerator(DummyInputGenerator):
         shape = (batch_size, self.sequence_length)
         return torch.ones(*shape, dtype=torch.int64)
 
-class Wav2Vec2ForEndpointing(Wav2Vec2PreTrainedModel):
-    def __init__(self, config):
-        super().__init__(config)
-        self.wav2vec2 = Wav2Vec2Model(config)
-
-        self.pool_attention = nn.Sequential(
-            nn.Linear(config.hidden_size, 256),
-            nn.Tanh(),
-            nn.Linear(256, 1)
-        )
-
-        self.classifier = nn.Sequential(
-            nn.Linear(config.hidden_size, 256),
-            nn.LayerNorm(256),
-            nn.GELU(),
-            nn.Dropout(0.1),
-            nn.Linear(256, 64),
-            nn.GELU(),
-            nn.Linear(64, 1)
-        )
-
-        self.init_weights()
-
-    def _init_weights(self, module):
-        """Initialize the weights."""
-        if isinstance(module, nn.Linear):
-            module.weight.data.normal_(mean=0.0, std=self.config.initializer_range)
-            if module.bias is not None:
-                module.bias.data.zero_()
-
-    def attention_pool(self, hidden_states, attention_mask):
-        attention_weights = self.pool_attention(hidden_states)
-
-        if attention_mask is None:
-            raise ValueError("attention_mask must be provided for attention pooling")
-
-        attention_weights = attention_weights + (
-                (1.0 - attention_mask.unsqueeze(-1).to(attention_weights.dtype)) * -1e9
-        )
-
-        attention_weights = F.softmax(attention_weights, dim=1)
-        weighted_sum = torch.sum(hidden_states * attention_weights, dim=1)
-
-        return weighted_sum
-
-    def forward(self, input_values, attention_mask=None, labels=None):
-            outputs = self.wav2vec2(input_values, attention_mask=None)
-            hidden_states = outputs.last_hidden_state
-
-            if attention_mask is not None:
-                input_length = attention_mask.size(1)
-                hidden_length = hidden_states.size(1)
-
-                if hidden_length > 0:
-                    ratio = input_length / hidden_length
-                    indices = (torch.arange(hidden_length, device=attention_mask.device) * ratio).long()
-                    pooling_attention_mask = attention_mask[:, indices]
-                else:
-                    pooling_attention_mask = torch.zeros(hidden_states.shape[:2], device=hidden_states.device)
-
-            else:
-                pooling_attention_mask = torch.ones(
-                    hidden_states.shape[:2], device=hidden_states.device
-                )
-
-            pooled = self.attention_pool(hidden_states, pooling_attention_mask.long())
-            logits = self.classifier(pooled)
-
-            if labels is not None:
-                pos_weight = ((labels == 0).sum() / (labels == 1).sum()).clamp(min=0.1, max=10.0)
-                loss_fct = nn.BCEWithLogitsLoss(pos_weight=pos_weight)
-                loss = loss_fct(logits.view(-1), labels.view(-1).float())
-                probs = torch.sigmoid(logits.detach())
-                return {"loss": loss, "logits": probs}
-            
-            probs = torch.sigmoid(logits)
-            return {"probabilities": probs}
-
 class Wav2Vec2ForEndpointingOnnxConfig(OnnxConfig):
     NORMALIZED_CONFIG_CLASS = NormalizedConfig
     DUMMY_INPUT_GENERATOR_CLASSES = (DummyAudioInputGenerator, DummyAttentionMaskGenerator)
@@ -145,7 +71,7 @@ class Wav2Vec2ForEndpointingOnnxConfig(OnnxConfig):
         """
         return OrderedDict(
             [
-                ("probabilities", {0: "batch_size"}),
+                ("logits", {0: "batch_size"}),
             ]
         )
 
@@ -175,20 +101,20 @@ def verify_onnx_model(model, onnx_model_path, feature_extractor):
     model.eval()
     with torch.no_grad():
         pytorch_outputs = model(input_values=input_values, attention_mask=attention_mask)
-        pytorch_probabilities = pytorch_outputs["probabilities"].numpy()
+        pytorch_logits = pytorch_outputs["logits"].numpy()
 
-    print(f"PyTorch model output (probabilities): {pytorch_probabilities}")
+    print(f"PyTorch model output (logits): {pytorch_logits}")
 
     ort_session = ort.InferenceSession(str(onnx_model_path))
     onnx_inputs = {
         "input_values": input_values.numpy(),
         "attention_mask": attention_mask.numpy().astype(np.int64)
     }
-    onnx_probabilities = ort_session.run(None, onnx_inputs)[0]
-    print(f"ONNX model output (probabilities):    {onnx_probabilities}")
+    onnx_logits = ort_session.run(None, onnx_inputs)[0]
+    print(f"ONNX model output (logits):    {onnx_logits}")
 
     try:
-        np.testing.assert_allclose(pytorch_probabilities, onnx_probabilities, rtol=1e-3, atol=1e-4)
+        np.testing.assert_allclose(pytorch_logits, onnx_logits, rtol=1e-3, atol=1e-4)
         print("\n✅ SUCCESS: The ONNX model's output matches the PyTorch model's output.")
         print("The conversion was successful and the model is ready to use.")
     except AssertionError as e:
@@ -209,14 +135,11 @@ def main(model_path: Path, output_path: Path):
     print(f"Loading custom model from: {model_path}")
 
     config = AutoConfig.from_pretrained(str(model_path))
-    config.register_for_auto_class("AutoModelForAudioClassification")
-    Wav2Vec2ForEndpointing.register_for_auto_class("AutoModelForAudioClassification")
-
     model = Wav2Vec2ForEndpointing.from_pretrained(str(model_path), config=config)
     feature_extractor = AutoFeatureExtractor.from_pretrained(str(model_path))
     
-    model.config.sampling_rate = feature_extractor.sampling_rate # this is so the attribute sampling_rate can be found
-    model.config.dummy_audio_duration = 2.0 # 2-second dummy clip
+    model.config.sampling_rate = feature_extractor.sampling_rate
+    model.config.dummy_audio_duration = 2.0
 
 
     custom_onnx_config = Wav2Vec2ForEndpointingOnnxConfig(model.config, task="audio-classification")
@@ -243,7 +166,7 @@ if __name__ == "__main__":
     args = parser.parse_args()
 
     try:
-        import onnxruntime  # noqa: F401 – check availability
+        import onnxruntime
     except ImportError:
         print("❌  onnxruntime not installed.  pip install onnxruntime")
         sys.exit(1)
