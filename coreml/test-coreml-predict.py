@@ -4,7 +4,7 @@ import coremltools as ct
 import numpy as np
 from transformers import Wav2Vec2Processor
 
-MODEL_PATH = "smart_turn_classifier_fp16.mlpackage"
+MODEL_PATH = "smart_turn_classifier.mlpackage"
 TORCH_MODEL_PATH = "pipecat-ai/smart-turn-v2"
 
 print("Loading Core ML model …")
