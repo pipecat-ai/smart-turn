@@ -1,9 +1,13 @@
-> [!NOTE]
-> Contribute to model development. Generate turn detection data by playing the [turn training games](https://turn-training.pipecat.ai/), or help improve the quality of existing training data using the [classification tool](https://smart-turn-dataset.pipecat.ai/).
-
 # Smart turn detection
 
 This is an open source, community-driven, native audio turn detection model.
+
+> [!NOTE]
+> Smart Turn V2 has now been released, with faster inference and support for 14 languages.
+> 
+> https://www.daily.co/blog/smart-turn-v2-faster-inference-and-13-new-languages-for-voice-ai/
+> 
+> Contribute to model development. Generate turn detection data by playing the [turn training games](https://turn-training.pipecat.ai/), or help improve the quality of existing training data using the [classification tool](https://smart-turn-dataset.pipecat.ai/).
 
 HuggingFace page: [pipecat-ai/smart-turn-v2](https://huggingface.co/pipecat-ai/smart-turn-v2)
 
