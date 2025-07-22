@@ -1,0 +1,15 @@
+# Python
+__pycache__/
+*.pyc
+.env
+
+# Local directories
+.venv/
+venv/
+env/
+
+# Project-specific generated files
+/output/
+/models/
+/.torch_hub/
+*.wav
