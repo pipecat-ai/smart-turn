@@ -25,7 +25,7 @@ Currently supported languages: 🇬🇧 🇺🇸 English, 🇫🇷 French, 🇩�
 
  ## Run the model locally
 
-Set up the environment.
+**Set up the environment:**
 
 ```
 python3.12 -m venv venv
@@ -33,19 +33,22 @@ source venv/bin/activate
 pip install -r requirements.txt
 ```
 
-## Installing audio dependencies
 You may need to install PortAudio development libraries if not already installed as those are required for PyAudio:
 
-### Ubuntu/Debian
+**Ubuntu/Debian**
+
 ```bash
 sudo apt-get update
 sudo apt-get install portaudio19-dev python3-dev
 ```
 
-### macOS (using Homebrew)
+**macOS (using Homebrew)**
+
 ```bash
 brew install portaudio
 ```
+
+**Run the utility**
 
 Run a command-line utility that streams audio from the system microphone, detects segment start/stop using VAD, and sends each segment to the model for a phrase endpoint prediction.
 
@@ -61,6 +64,56 @@ Run a command-line utility that streams audio from the system microphone, detect
 
 python record_and_predict.py
 ```
+
+## Model usage
+
+### With Pipecat
+
+Pipecat supports local inference using `LocalSmartTurnAnalyzerV2` (available in v0.0.77), and also supports using the instance hosted on [Fal](https://fal.ai/) using `FalSmartTurnAnalyzer`.
+
+For more information, see the Pipecat documentation:
+
+https://docs.pipecat.ai/server/utilities/smart-turn/smart-turn-overview
+
+### With Pipecat Cloud
+
+Pipecat Cloud users can make use of Fal's hosted Smart Turn v2 inference using `FalSmartTurnAnalyzer`. This service is provided at no extra cost.
+
+See the following page for details:
+
+https://pipecat-cloud.mintlify.app/pipecat-in-production/smart-turn
+
+### With local inference
+
+From the Smart Turn source repository, obtain the files `model.py` and `inference.py`. Import these files into your project and invoke the `predict_endpoint()` function with your audio. For an example, please see `predict.py`:
+
+https://github.com/pipecat-ai/smart-turn/blob/main/predict.py
+
+### With Fal hosted inference
+
+[Fal](https://fal.ai/) provides a hosted Smart Turn endpoint which has been updated with the latest v2 model.
+
+https://fal.ai/models/fal-ai/smart-turn/api
+
+Please see the link above for documentation, or try the sample `curl` command below.
+
+```bash
+curl -X POST --url https://fal.run/fal-ai/smart-turn \
+    --header "Authorization: Key $FAL_KEY" \
+    --header "Content-Type: application/json" \
+    --data '{ "audio_url": "https://fal.media/files/panda/5-QaAOC32rB_hqWaVdqEH.mpga" }'
+```
+
+### Notes on input format
+
+Smart Turn takes 16kHz PCM audio as input. Up to 16 seconds of audio is supported, and we recommend providing approximately the last 8 seconds of speech.
+
+The model is designed to be used in conjunction with a lightweight VAD model such as Silero. Once the VAD model detects silence, run Smart Turn on the entire recording of the user's turn, truncating from the beginning to shorten the audio to around 8 seconds if necessary.
+
+If additional speech is detected from the user before Smart Turn has finished executing, re-run Smart Turn on the entire turn recording, including the new audio, rather than just the new segment. Smart Turn works best when given sufficient context, and is not designed to run on very short audio segments.
+
+Note that audio from previous turns does not need to be included. 
+
 
 ## Project goals
 
