@@ -1,0 +1,14 @@
+# For ONNX export and base models
+torch
+transformers
+optimum[exporters]
+onnx
+
+# For ONNX runtime
+onnxruntime
+# or for GPU: onnxruntime-gpu
+
+# For audio processing and demo
+pyaudio
+scipy
+numpy
