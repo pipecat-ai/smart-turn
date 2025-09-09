@@ -6,9 +6,13 @@ Help make Smart Turn better by contributing training and testing data! This guid
 
 **FLAC is the preferred format** for training data. Lossy formats such as MP3 or Opus should be avoided.
 
-**Mono audio** with a **bit depth of 16 bits** is used for training and is strongly preferred. The model works with 16kHz audio, but sample rates higher than this are fine. 
+**Mono audio** with a **bit depth of 16 bits** is used for training and is strongly preferred. The model works with 16kHz audio, but sample rates higher than this are fine.
 
-We are happy to work with whatever naming scheme and directory structure suits you best. As an example, we use a unique UUID for each filename, and directory names as labels, for example, `incomplete/b3799254-8d6c-11f0-a90e-e7e92780240b.flac`. However, this is not required, and you may submit metadata with labels separately if this is easier. 
+We are happy to work with whatever naming scheme and directory structure suits you best. As an example, we use a unique UUID for each filename, and directory names as labels, for example, `eng/incomplete/b3799254-8d6c-11f0-a90e-e7e92780240b.flac`.
+
+Samples must be labelled/grouped by language, and also by whether they are "complete" or "incomplete" (there is more detail on these in the "Labelling" section below).
+
+It's fine to use directories to group samples, or to supply a separate metadata file (such as JSONL).
 
 
 ## Length
@@ -22,6 +26,8 @@ Each audio file should contain one speech sample, **no longer than 16 seconds**.
 
 Smart Turn is a **fully open model**, and we release all datasets publicly: https://huggingface.co/pipecat-ai/datasets
 
+By contributing, you confirm you own the recordings, the speakers consent to public release of their voice, and grant us the rights to redistribute.
+
 
 ## Speech content
 
@@ -34,7 +40,7 @@ Ideally the spoken words should resemble what someone would say to either a **vo
 * "Yes, that's correct."
 * "The card number is eight seven one two..."
 
-Please **avoid repeating sentences** in the dataset, and **minimise background noise**.
+Please **avoid repeating sentences** in the dataset, and **minimise background noise**. No real PII (such as names or addresses) should be included in samples.
 
 
 ## Labelling
