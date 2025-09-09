@@ -76,7 +76,7 @@ Each incomplete sample should end in one or more of the following:
 
 Please note that incomplete samples **must not be cut off in the middle of a word**.
 
-* ❌ "How tall is the Eiff <cut off>"
+* ❌ "How tall is the Eiff"
 * ✅ "How tall is the *Eiffel...*"
 
 To give some background, Smart Turn operates in conjunction with a VAD (Voice Activity Detection) model. Only once the speaker has been silent for 200ms does Smart Turn actually run. So ideally, each incomplete sample (and complete sample) would **end with around 200ms of silence**. More silence than this is also fine.
