@@ -11,3 +11,5 @@ wandb
 modal
 pyaudio
 torchaudio
+onnx
+onnxruntime

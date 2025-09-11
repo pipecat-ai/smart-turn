@@ -3,13 +3,13 @@
 This is an open source, community-driven, native audio turn detection model.
 
 > [!NOTE]
-> Smart Turn V2 has now been released, with faster inference and support for 14 languages.
+> Smart Turn v3 has now been released. The model is 50x smaller, with support for 23 languages, and significant performance improvements which you can run it directly on CPU.
 > 
-> https://www.daily.co/blog/smart-turn-v2-faster-inference-and-13-new-languages-for-voice-ai/
+> https://www.daily.co/blog/
 > 
-> Contribute to model development. Generate turn detection data by playing the [turn training games](https://turn-training.pipecat.ai/), or help improve the quality of existing training data using the [classification tool](https://smart-turn-dataset.pipecat.ai/).
+> Contribute to model development. Generate turn detection data by playing the [turn training games](https://turn-training.pipecat.ai/), or help improve the quality of existing training data by listening to existing samples using the [classification tool](https://smart-turn-dataset.pipecat.ai/).
 
-HuggingFace page: [pipecat-ai/smart-turn-v2](https://huggingface.co/pipecat-ai/smart-turn-v2)
+**HuggingFace page with model weights**: [pipecat-ai/smart-turn-v3](https://huggingface.co/pipecat-ai/smart-turn-v3)
 
 Turn detection is one of the most important functions of a conversational voice AI technology stack. Turn detection means deciding when a voice agent should respond to human speech.
 
@@ -19,9 +19,9 @@ This is a truly open model (BSD 2-clause license). Anyone can use, fork, and con
 
  ## Current state of the model
 
-Smart Turn v2 supports 14 different languages, and was trained on a range of synthetic and human data. Performance has also increased 3x since the first version, and we're hopeful that this can be optimized even further.
+Smart Turn v3 supports 23 different languages, and was trained on a range of synthetic and human data. The model is now fast enough that no GPU is required for inference.
 
-Currently supported languages: 🇬🇧 🇺🇸 English, 🇫🇷 French, 🇩🇪 German, 🇪🇸 Spanish, 🇵🇹 Portuguese, 🇨🇳 Chinese, 🇯🇵 Japanese, 🇮🇳 Hindi, 🇮🇹 Italian, 🇰🇷 Korean, 🇳🇱 Dutch, 🇵🇱 Polish, 🇷🇺 Russian, and 🇹🇷 Turkish.
+Currently supported languages:  🇸🇦 Arabic, 🇧🇩 Bengali, 🇨🇳 Chinese, 🇩🇰 Danish, 🇳🇱 Dutch, 🇩🇪 German, 🇬🇧 🇺🇸 English, 🇫🇮 Finnish, 🇫🇷 French, 🇮🇳 Hindi, 🇮🇩 Indonesian, 🇮🇹 Italian, 🇯🇵 Japanese, 🇰🇷 Korean, 🇮🇳 Marathi, 🇳🇴 Norwegian, 🇵🇱 Polish, 🇵🇹 Portuguese, 🇷🇺 Russian, 🇪🇸 Spanish, 🇹🇷 Turkish, 🇺🇦 Ukrainian, and 🇻🇳 Vietnamese.
 
  ## Run the model locally
 
@@ -69,7 +69,7 @@ python record_and_predict.py
 
 ### With Pipecat
 
-Pipecat supports local inference using `LocalSmartTurnAnalyzerV2` (available in v0.0.77), and also supports using the instance hosted on [Fal](https://fal.ai/) using `FalSmartTurnAnalyzer`.
+Pipecat supports local inference using `LocalSmartTurnAnalyzerV3` (available in v0.0.85), and also supports using the instance hosted on [Fal](https://fal.ai/) using `FalSmartTurnAnalyzer`.
 
 For more information, see the Pipecat documentation:
 
@@ -77,7 +77,7 @@ https://docs.pipecat.ai/server/utilities/smart-turn/smart-turn-overview
 
 ### With Pipecat Cloud
 
-Pipecat Cloud users can make use of Fal's hosted Smart Turn v2 inference using `FalSmartTurnAnalyzer`. This service is provided at no extra cost.
+Pipecat Cloud users can make use of Fal's hosted Smart Turn inference using `FalSmartTurnAnalyzer`. This service is provided at no extra cost.
 
 See the following page for details:
 
@@ -91,7 +91,7 @@ https://github.com/pipecat-ai/smart-turn/blob/main/predict.py
 
 ### With Fal hosted inference
 
-[Fal](https://fal.ai/) provides a hosted Smart Turn endpoint which has been updated with the latest v2 model.
+[Fal](https://fal.ai/) provides a hosted Smart Turn endpoint.
 
 https://fal.ai/models/fal-ai/smart-turn/api
 
@@ -106,7 +106,7 @@ curl -X POST --url https://fal.run/fal-ai/smart-turn \
 
 ### Notes on input format
 
-Smart Turn takes 16kHz PCM audio as input. Up to 16 seconds of audio is supported, and we recommend providing approximately the last 8 seconds of speech.
+Smart Turn takes 16kHz PCM audio as input. Up to 8 seconds of audio is supported, and we recommend providing the full audio of the user's current turn.
 
 The model is designed to be used in conjunction with a lightweight VAD model such as Silero. Once the VAD model detects silence, run Smart Turn on the entire recording of the user's turn, truncating from the beginning to shorten the audio to around 8 seconds if necessary.
 
@@ -117,7 +117,7 @@ Note that audio from previous turns does not need to be included.
 
 ## Project goals
 
-The current version of this model is based on Meta AI's Wav2Vec2 backbone. More on model architecture below.
+The current version of this model is based on the Whisper Tiny backbone. More on model architecture below.
 
 The high-level goal of this project is to build a state-of-the-art turn detection model that:
   - Anyone can use,
@@ -132,65 +132,14 @@ Medium-term goals:
 
 ## Model architecture
 
-Smart Turn v2 uses Wav2Vec2 as a base, with a linear classifier layer. The model is transformer-based and has approximately 95M parameters.
+Smart Turn v3 uses Whisper Tiny as a base, with a linear classifier layer. The model is transformer-based and has approximately 8M parameters, quantized to int8.
 
-We have experimented with multiple architectures and base models, including wav2vec2-BERT, LSTM, and additional transformer classifier layers. We've found that Wav2Vec2 with a linear classifier gives the best accuracy, however model architecture is still an open area of investigation. 
-
-### Links
-
-- [Meta AI Seamless paper](https://ai.meta.com/research/publications/seamless-multilingual-expressive-and-streaming-speech-translation/)
-- [Wav2Vec2 paper](https://arxiv.org/abs/2006.11477)
-- [Wav2Vec2 model](https://huggingface.co/docs/transformers/en/model_doc/wav2vec2)
+We have experimented with multiple architectures and base models, including wav2vec2-BERT, wav2vec2, LSTM, and additional transformer classifier layers.
 
 
 ## Inference
 
-`predict.py` shows how to pass an audio sample through the model for classification. A small convenience function in `inference.py` wraps the audio preprocessing and PyTorch inference code.
-
-```
-# defined in inference.py
-def predict_endpoint(audio_array):
-    """
-    Predict whether an audio segment is complete (turn ended) or incomplete.
-
-    Args:
-        audio_array: Numpy array containing audio samples at 16kHz
-
-    Returns:
-        Dictionary containing prediction results:
-        - prediction: 1 for complete, 0 for incomplete
-        - probability: Probability of completion (sigmoid output)
-    """
-
-    # Process audio
-    inputs = processor(
-        audio_array,
-        sampling_rate=16000,
-        padding="max_length",
-        truncation=True,
-        max_length=16000 * 16,  # 16 seconds at 16kHz as specified in training
-        return_attention_mask=True,
-        return_tensors="pt"
-    )
-
-    # Move inputs to device
-    inputs = {k: v.to(device) for k, v in inputs.items()}
-
-    # Run inference
-    with torch.no_grad():
-        outputs = model(**inputs)
-
-        # The model returns sigmoid probabilities directly in the logits field
-        probability = outputs["logits"][0].item()
-
-        # Make prediction (1 for Complete, 0 for Incomplete)
-        prediction = 1 if probability > 0.5 else 0
-
-    return {
-        "prediction": prediction,
-        "probability": probability,
-    }
-```
+Sample code for inference is included in `inference.py`. See `predict.py` and `record_and_predict.py` for usage examples.
 
 ## Training
 
@@ -209,15 +158,8 @@ modal run --detach train.py
 
 Currently, the following datasets are used for training and evaluation:
 
-* pipecat-ai/rime_2
-* pipecat-ai/human_5_all
-* pipecat-ai/human_convcollector_1
-* pipecat-ai/orpheus_grammar_1
-* pipecat-ai/orpheus_midfiller_1
-* pipecat-ai/orpheus_endfiller_1
-* pipecat-ai/chirp3_1
-
-The data is split into training, eval, and testing sets by `train.py`.
+* pipecat-ai/smart-turn-data-v3-train
+* pipecat-ai/smart-turn-data-v3-test
 
 ## Things to do
 
@@ -240,14 +182,6 @@ For example, it would be great to provide the model with additional context to c
 ### Supporting training on more platforms
 
 We trained early versions of this model on Google Colab. We should support Colab as a training platform, again! It would be great to have quickstarts for training on a wide variety of platforms.
-
-### Optimization
-
-This model will likely perform well in quantized versions. Quantized versions should run significantly faster than the current float32 weights.
-
-The PyTorch inference code is not particularly optimized. We should be able to hand-write inference code that runs substantially faster on both GPU and CPU, for this model architecture.
-
-It would be nice to port inference code to Apple's MLX platform. This would be particular useful for local development and debugging, as well as potentially open up the possibility of running this model locally on iOS devices (in combination with quantization).
 
 ## Contributors
 

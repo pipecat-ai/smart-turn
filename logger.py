@@ -54,27 +54,19 @@ def log_model_structure(model, config):
     log.info(f"Trainable parameters: {trainable_params:,}")
     log.info(f"Non-trainable parameters: {total_params - trainable_params:,}")
 
-    # Get wav2vec2 encoder layer information
-    if hasattr(model, 'wav2vec2') and hasattr(model.wav2vec2, 'encoder'):
-        encoder_layers = len(model.wav2vec2.encoder.layers)
-        log.info(f"\nWav2Vec2 Encoder Layers: {encoder_layers}")
+    # Get Whisper encoder layer information
+    if hasattr(model, 'encoder'):
+        encoder_layers = len(model.encoder.layers)
+        log.info(f"Whisper Encoder Layers: {encoder_layers}")
 
-        # Log layer dimensions for first few layers
-        log.info(f"\nLayer dimensions (first 3 layers):")
-        for i in range(encoder_layers):
-            layer = model.wav2vec2.encoder.layers[i]
-            if hasattr(layer, 'attention'):
-                attention = layer.attention
-                if hasattr(attention, 'k_proj'):
-                    hidden_size = attention.k_proj.in_features
-                    log.info(f"  Layer {i}: hidden_size={hidden_size}, num_heads={attention.num_heads}")
-
-    # Log transformer encoder structure
-    if hasattr(model, 'transformer_encoder'):
-        transformer_layers = len(model.transformer_encoder.layers)
-        log.info(f"\nCustom Transformer Encoder Layers: {transformer_layers}")
-        log.info(
-            f"Transformer config: heads={config['transformer_heads']}, dim_feedforward={config['transformer_dim_feedforward']}")
+        # Get first layer info for dimensions
+        if encoder_layers > 0:
+            first_layer = model.encoder.layers[0]
+            if hasattr(first_layer, 'self_attn'):
+                self_attn = first_layer.self_attn
+                embed_dim = self_attn.embed_dim
+                num_heads = self_attn.num_heads
+                log.info(f"  Encoder embed_dim: {embed_dim}, num_heads: {num_heads}")
 
     # Log classifier structure
     if hasattr(model, 'classifier'):
@@ -85,7 +77,7 @@ def log_model_structure(model, config):
             elif isinstance(layer, nn.LayerNorm):
                 log.info(f"  {i} LayerNorm: normalized_shape={layer.normalized_shape}")
             else:
-                log.info(f"  {type(layer).__name__} {i}")
+                log.info(f"  {i} {type(layer).__name__}")
 
     # Log attention pooling structure
     if hasattr(model, 'pool_attention'):
@@ -96,39 +88,106 @@ def log_model_structure(model, config):
             else:
                 log.info(f"  {i} {type(layer).__name__}")
 
+    # Log Whisper configuration details
+    if hasattr(model, 'config'):
+        whisper_config = model.config
+        log.info(f"\nWhisper Configuration:")
+        log.info(f"  Model dimension (d_model): {getattr(whisper_config, 'd_model', 'N/A')}")
+        log.info(f"  Encoder layers: {getattr(whisper_config, 'encoder_layers', 'N/A')}")
+        log.info(f"  Decoder layers: {getattr(whisper_config, 'decoder_layers', 'N/A')}")
+        log.info(f"  Encoder attention heads: {getattr(whisper_config, 'encoder_attention_heads', 'N/A')}")
+        log.info(f"  Max source positions: {getattr(whisper_config, 'max_source_positions', 'N/A')}")
+
     log.info("--- END MODEL STRUCTURE ---")
 
 
 def log_dataset_statistics(split_name, dataset):
-    """Log detailed statistics about each dataset split."""
+    """Log detailed statistics about each dataset split - handles both HF datasets and OnDemandWhisperDataset."""
     log.info(f"\n-- Dataset statistics: {split_name} --")
 
     # Basic statistics
     total_samples = len(dataset)
-    if "labels" in dataset.features:
-        labels = dataset["labels"]
-        positive_samples = sum(1 for label in labels if label == 1)
-        negative_samples = total_samples - positive_samples
-        positive_ratio = positive_samples / total_samples * 100
+    log.info(f"  Total samples: {total_samples:,}")
 
-        log.info(f"  Total samples: {total_samples:,}")
-        log.info(f"  Positive samples (Complete): {positive_samples:,} ({positive_ratio:.2f}%)")
-        log.info(f"  Negative samples (Incomplete): {negative_samples:,} ({100 - positive_ratio:.2f}%)")
+    # Check if it's our custom dataset
+    if hasattr(dataset, 'dataset'):
+        # It's OnDemandWhisperDataset - access the underlying HF dataset
+        underlying_dataset = dataset.dataset
+        log.info(f"  Dataset type: OnDemandWhisperDataset (with on-demand preprocessing)")
 
-        # Audio length statistics if available
-        if "audio" in dataset.features:
-            audio_lengths = [len(x["array"]) / 16000 for x in dataset["audio"]]  # Convert to seconds
-            avg_length = sum(audio_lengths) / len(audio_lengths)
-            min_length = min(audio_lengths)
-            max_length = max(audio_lengths)
+        # Check if underlying dataset has the endpoint_bool column
+        if hasattr(underlying_dataset, 'column_names') and 'endpoint_bool' in underlying_dataset.column_names:
+            endpoint_labels = underlying_dataset['endpoint_bool']
+            positive_samples = sum(1 for label in endpoint_labels if label)
+            negative_samples = total_samples - positive_samples
+            positive_ratio = positive_samples / total_samples * 100
 
-            log.info(f"  Audio statistics (in seconds):")
-            log.info(f"    Average length: {avg_length:.2f}")
-            log.info(f"    Min length: {min_length:.2f}")
-            log.info(f"    Max length: {max_length:.2f}")
+            log.info(f"  Positive samples (Complete): {positive_samples:,} ({positive_ratio:.2f}%)")
+            log.info(f"  Negative samples (Incomplete): {negative_samples:,} ({100 - positive_ratio:.2f}%)")
+
+        # Log language distribution if available
+        if hasattr(underlying_dataset, 'column_names') and 'language' in underlying_dataset.column_names:
+            languages = underlying_dataset['language']
+            from collections import Counter
+            lang_counts = Counter(languages)
+            log.info(f"  Language distribution: {dict(lang_counts)}")
+
+        # Log other metadata columns
+        if hasattr(underlying_dataset, 'column_names'):
+            other_columns = [col for col in underlying_dataset.column_names
+                             if col not in ['audio', 'endpoint_bool', 'language']]
+            if other_columns:
+                log.info(f"  Other available columns: {other_columns}")
+
+        # Try to get a sample to show feature dimensions
+        try:
+            sample = dataset[0]  # This will trigger preprocessing
+            if 'input_features' in sample:
+                feature_shape = sample['input_features'].shape
+                log.info(f"  Processed feature shape: {feature_shape}")
+                # Estimate duration from feature shape (each frame ~10ms for Whisper)
+                if len(feature_shape) >= 2:
+                    n_frames = feature_shape[-1]
+                    estimated_duration = n_frames * 0.01  # 10ms per frame for Whisper
+                    log.info(f"  Estimated max duration: {estimated_duration:.1f} seconds")
+        except Exception as e:
+            log.info(f"  Could not analyze processed features: {e}")
+
+    elif hasattr(dataset, 'features'):
+        # It's a regular HF dataset
+        log.info(f"  Dataset type: HuggingFace Dataset")
+
+        if "labels" in dataset.features:
+            labels = dataset["labels"]
+            positive_samples = sum(1 for label in labels if label == 1)
+            negative_samples = total_samples - positive_samples
+            positive_ratio = positive_samples / total_samples * 100
+
+            log.info(f"  Positive samples (Complete): {positive_samples:,} ({positive_ratio:.2f}%)")
+            log.info(f"  Negative samples (Incomplete): {negative_samples:,} ({100 - positive_ratio:.2f}%)")
+
+            # For Whisper, we work with input_features instead of raw audio
+            if "input_features" in dataset.features:
+                try:
+                    sample_features = dataset[0]["input_features"]
+                    if hasattr(sample_features, 'shape') and len(sample_features.shape) >= 2:
+                        n_frames = sample_features.shape[-1]
+                        estimated_duration = n_frames * 0.01  # 10ms per frame for Whisper
+                        log.info(f"  Feature statistics:")
+                        log.info(f"    Sample feature shape: {sample_features.shape}")
+                        log.info(f"    Estimated duration (first sample): {estimated_duration:.2f} seconds")
+                    else:
+                        log.info(f"  Feature statistics:")
+                        log.info(f"    Features available but shape analysis not possible")
+                except Exception as e:
+                    log.info(f"  Feature statistics:")
+                    log.info(f"    Could not analyze feature dimensions: {e}")
+        else:
+            log.warning(f"  (no labels found in features)")
     else:
-        log.warning(f"  (no labels!)")
-        log.info(f"  Total samples: {total_samples:,}")
+        # Unknown dataset type
+        log.info(f"  Dataset type: {type(dataset).__name__}")
+        log.warning(f"  Could not analyze dataset structure")
 
 
 class ProgressLoggerCallback(TrainerCallback):
