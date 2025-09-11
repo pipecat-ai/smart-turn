@@ -5,7 +5,7 @@ This is an open source, community-driven, native audio turn detection model.
 > [!NOTE]
 > Smart Turn v3 has now been released. The model is 50x smaller, with support for 23 languages, and significant performance improvements which you can run it directly on CPU.
 > 
-> https://www.daily.co/blog/
+> https://www.daily.co/blog/announcing-smart-turn-v3-with-cpu-inference-in-just-12ms/
 > 
 > Contribute to model development. Generate turn detection data by playing the [turn training games](https://turn-training.pipecat.ai/), or help improve the quality of existing training data by listening to existing samples using the [classification tool](https://smart-turn-dataset.pipecat.ai/).
 
