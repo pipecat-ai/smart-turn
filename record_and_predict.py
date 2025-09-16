@@ -1,160 +1,197 @@
+import os
+import time
+import math
+import urllib.request
+from collections import deque
+
 import numpy as np
 import pyaudio
-import sys
 from scipy.io import wavfile
-import time
-import torch
+import onnxruntime as ort
 
-# Import the new inference script
-from inference import predict_endpoint
+from inference import predict_endpoint  # assumes 16 kHz mono float32 input
 
-# --- Configuration ---
+# --- Configuration (fixed 16 kHz mono, 512-sample chunks) ---
 RATE = 16000
-CHUNK = 512  # Adjusted CHUNK size to match Silero VAD expectation for 16kHz
+CHUNK = 512                     # Silero VAD expects 512 samples at 16 kHz
 FORMAT = pyaudio.paInt16
 CHANNELS = 1
-STOP_MS = 1000
-PRE_SPEECH_MS = 200
-MAX_DURATION_SECONDS = 16  # Maximum duration for the W2v-BERT model
-VAD_THRESHOLD = 0.7  # Threshold for speech detection
+
+VAD_THRESHOLD = 0.5             # speech probability threshold
+PRE_SPEECH_MS = 200             # keep this many ms before trigger
+STOP_MS = 1000                  # end after this much trailing silence
+MAX_DURATION_SECONDS = 8        # hard cap per segment
+
+DEBUG_SAVE_WAV = False
 TEMP_OUTPUT_WAV = "temp_output.wav"
 
-# --- Load Silero VAD Model ---
-try:
-    print("Attempting to load Silero VAD model...")
-    torch.hub.set_dir("./.torch_hub")  # Set a specific hub directory for debugging
-    MODEL, _ = torch.hub.load(
-        repo_or_dir="snakers4/silero-vad",
-        source="github",
-        model="silero_vad",  # Explicitly specify the model name
-        onnx=False,
-        trust_repo=True,
-    )  # Trust the repository
-    print("Silero VAD model loaded successfully.")
-except Exception as e:
-    print(f"Error loading Silero VAD model: {e}")
-    print(
-        "Please ensure you have an internet connection and that torch and torchaudio are installed correctly."
-    )
-    print("You can try installing them using: pip install torch torchaudio")
-    print("If the issue persists, try clearing the torch hub cache:")
-    print("import torch; print(torch.hub.get_dir())  # Find the cache directory")
-    print("Then manually delete the 'snakers4_silero-vad_...' folder.")
-    sys.exit(1)
+# Silero ONNX model
+ONNX_MODEL_URL = (
+    "https://github.com/snakers4/silero-vad/raw/master/src/silero_vad/data/silero_vad.onnx"
+)
+ONNX_MODEL_PATH = "silero_vad.onnx"
+
+# Reset VAD internal state every N seconds
+MODEL_RESET_STATES_TIME = 5.0
+
+
+class SileroVAD:
+    """Minimal Silero VAD ONNX wrapper for 16 kHz, mono, chunk=512."""
+
+    def __init__(self, model_path: str):
+        opts = ort.SessionOptions()
+        opts.inter_op_num_threads = 1
+        opts.intra_op_num_threads = 1
+        self.session = ort.InferenceSession(
+            model_path, providers=["CPUExecutionProvider"], sess_options=opts
+        )
+        self.context_size = 64            # Silero uses 64-sample context at 16 kHz
+        self._state = None
+        self._context = None
+        self._last_reset_time = time.time()
+        self._init_states()
+
+    def _init_states(self):
+        self._state = np.zeros((2, 1, 128), dtype=np.float32)     # (2, B, 128)
+        self._context = np.zeros((1, self.context_size), dtype=np.float32)
+
+    def maybe_reset(self):
+        if (time.time() - self._last_reset_time) >= MODEL_RESET_STATES_TIME:
+            self._init_states()
+            self._last_reset_time = time.time()
+
+    def prob(self, chunk_f32: np.ndarray) -> float:
+        """
+        Compute speech probability for one chunk of length 512 (float32, mono).
+        Returns a scalar float.
+        """
+        # Ensure shape (1, 512) and concat context
+        x = np.reshape(chunk_f32, (1, -1))
+        if x.shape[1] != CHUNK:
+            raise ValueError(f"Expected {CHUNK} samples, got {x.shape[1]}")
+        x = np.concatenate((self._context, x), axis=1)
+
+        # Run ONNX
+        ort_inputs = {"input": x.astype(np.float32), "state": self._state, "sr": np.array(16000, dtype=np.int64)}
+        out, self._state = self.session.run(None, ort_inputs)
+
+        # Update context (keep last 64 samples)
+        self._context = x[:, -self.context_size:]
+        self.maybe_reset()
+
+        # out shape is (1, 1) -> return scalar
+        return float(out[0][0])
+
+
+def ensure_model(path: str = ONNX_MODEL_PATH, url: str = ONNX_MODEL_URL) -> str:
+    if not os.path.exists(path):
+        print("Downloading Silero VAD ONNX model...")
+        urllib.request.urlretrieve(url, path)
+        print("ONNX model downloaded.")
+    return path
 
 
 def record_and_predict():
-    p = pyaudio.PyAudio()
+    # Derived chunk counts (avoid timestamp tracking)
+    chunk_ms = (CHUNK / RATE) * 1000.0
+    pre_chunks = math.ceil(PRE_SPEECH_MS / chunk_ms)
+    stop_chunks = math.ceil(STOP_MS / chunk_ms)
+    max_chunks = math.ceil(MAX_DURATION_SECONDS / (CHUNK / RATE))
 
-    stream = p.open(
-        format=FORMAT, channels=CHANNELS, rate=RATE, input=True, frames_per_buffer=CHUNK
+    # Pre-speech ring buffer
+    pre_buffer = deque(maxlen=pre_chunks)
+
+    # Segment assembly state
+    segment = []             # list of float32 chunks (includes pre, speech, trailing silence)
+    speech_active = False
+    trailing_silence = 0
+    since_trigger_chunks = 0
+
+    # Init audio + VAD
+    vad = SileroVAD(ensure_model())
+    pa = pyaudio.PyAudio()
+    stream = pa.open(
+        format=FORMAT,
+        channels=CHANNELS,
+        rate=RATE,
+        input=True,
+        frames_per_buffer=CHUNK,
     )
 
-    print("Clearing audio buffer and listening for speech...")
-
-    audio_buffer = []
-    silence_frames = 0
-    speech_start_time = None
-    speech_triggered = False
-
+    print("Listening for speech... (Ctrl+C to stop)")
     try:
         while True:
-            data = stream.read(CHUNK)
-            audio_np = np.frombuffer(data, dtype=np.int16)
-            audio_float32 = audio_np.astype(np.float32) / np.iinfo(np.int16).max
+            # Read one chunk and convert ONCE
+            data = stream.read(CHUNK, exception_on_overflow=False)
+            int16 = np.frombuffer(data, dtype=np.int16)
+            f32 = (int16.astype(np.float32)) / 32768.0
 
-            # Use Silero VAD model directly to get probability
-            speech_prob = MODEL(torch.from_numpy(audio_float32).unsqueeze(0), RATE).item()
-            is_speech = speech_prob > VAD_THRESHOLD
+            # VAD
+            is_speech = vad.prob(f32) > VAD_THRESHOLD
 
-            if is_speech:
-                if not speech_triggered:
-                    silence_frames = 0
-                speech_triggered = True
-                if speech_start_time is None:
-                    speech_start_time = time.time()
-                audio_buffer.append((time.time(), audio_float32))
+            if not speech_active:
+                # Warmup pre-speech buffer until trigger
+                pre_buffer.append(f32)
+                if is_speech:
+                    # Trigger: start a new segment with pre-speech
+                    segment = list(pre_buffer)
+                    segment.append(f32)
+                    speech_active = True
+                    trailing_silence = 0
+                    since_trigger_chunks = 1
             else:
-                if speech_triggered:
-                    audio_buffer.append((time.time(), audio_float32))
-                    silence_frames += 1
-                    if silence_frames * (CHUNK / RATE) >= STOP_MS / 1000:
-                        speech_triggered = False
-                        speech_stop_time = time.time()
-
-                        # Stop the stream before processing
-                        stream.stop_stream()
-
-                        process_speech_segment(audio_buffer, speech_start_time, speech_stop_time)
-                        audio_buffer = []
-                        speech_start_time = None
-
-                        # Restart the stream after processing
-                        stream.start_stream()
-                        print("Listening for speech...")
+                # Already in a segment
+                segment.append(f32)
+                since_trigger_chunks += 1
+                if is_speech:
+                    trailing_silence = 0
                 else:
-                    # Keep buffering some silence before potential speech starts
-                    audio_buffer.append((time.time(), audio_float32))
-                    # Keep the buffer size reasonable, assuming CHUNK is small
-                    max_buffer_time = (
-                                              PRE_SPEECH_MS + STOP_MS
-                                      ) / 1000 + MAX_DURATION_SECONDS  # Some extra buffer
-                    while audio_buffer and audio_buffer[0][0] < time.time() - max_buffer_time:
-                        audio_buffer.pop(0)
+                    trailing_silence += 1
+
+                # End conditions: long enough silence or duration cap
+                if trailing_silence >= stop_chunks or since_trigger_chunks >= max_chunks:
+                    # Pause capture while we process
+                    stream.stop_stream()
+                    _process_segment(np.concatenate(segment, dtype=np.float32))
+                    # Reset for next segment
+                    segment.clear()
+                    speech_active = False
+                    trailing_silence = 0
+                    since_trigger_chunks = 0
+                    pre_buffer.clear()
+                    stream.start_stream()
+                    print("Listening for speech...")
 
     except KeyboardInterrupt:
-        print("Stopping...")
+        print("\nStopping...")
     finally:
         stream.stop_stream()
         stream.close()
-        p.terminate()
+        pa.terminate()
 
 
-def process_speech_segment(audio_buffer, speech_start_time, speech_stop_time):
-    if not audio_buffer:
+def _process_segment(segment_audio_f32: np.ndarray):
+    if segment_audio_f32.size == 0:
+        print("Captured empty audio segment, skipping prediction.")
         return
 
-    # Find start and end indices for the segment
-    start_time = speech_start_time - (PRE_SPEECH_MS / 1000)
-    start_index = 0
-    for i, (t, _) in enumerate(audio_buffer):
-        if t >= start_time:
-            start_index = i
-            break
+    if DEBUG_SAVE_WAV:
+        wavfile.write(TEMP_OUTPUT_WAV, RATE, (segment_audio_f32 * 32767.0).astype(np.int16))
 
-    end_index = len(audio_buffer) - 1
+    dur_sec = segment_audio_f32.size / RATE
+    print(f"Processing segment ({dur_sec:.2f}s)...")
 
-    # Extract the audio segment
-    segment_audio_chunks = [chunk for _, chunk in audio_buffer[start_index: end_index + 1]]
-    segment_audio = np.concatenate(segment_audio_chunks)
+    t0 = time.perf_counter()
+    result = predict_endpoint(segment_audio_f32)  # expects 16 kHz float32 mono
+    dt_ms = (time.perf_counter() - t0) * 1000.0
 
-    # Remove (STOP_MS - 200)ms from the end of the segment
-    samples_to_remove = int((STOP_MS - 200) / 1000 * RATE)
-    segment_audio = segment_audio[:-samples_to_remove]
+    pred = result.get("prediction", 0)
+    prob = result.get("probability", float("nan"))
 
-    # Limit maximum duration
-    if len(segment_audio) / RATE > MAX_DURATION_SECONDS:
-        segment_audio = segment_audio[: int(MAX_DURATION_SECONDS * RATE)]
-
-    # No resampling needed as both recording and prediction use 16000 Hz
-    segment_audio_resampled = segment_audio
-
-    if len(segment_audio_resampled) > 0:
-        # Save the audio for debugging purposes
-        wavfile.write(TEMP_OUTPUT_WAV, RATE, (segment_audio_resampled * 32767).astype(np.int16))
-        print(f"Processing speech segment of length {len(segment_audio) / RATE:.2f} seconds...")
-
-        # Call the new predict_endpoint function with the audio data
-        start_time = time.perf_counter()
-        result = predict_endpoint(segment_audio_resampled)
-        end_time = time.perf_counter()
-
-        print("--------")
-        print(f"Prediction: {'Complete' if result['prediction'] == 1 else 'Incomplete'}")
-        print(f"Probability of complete: {result['probability']:.4f}")
-        print(f"Prediction took {(end_time - start_time) * 1000:.2f}ms seconds")
-    else:
-        print("Captured empty audio segment, skipping prediction.")
+    print("--------")
+    print(f"Prediction: {'Complete' if pred == 1 else 'Incomplete'}")
+    print(f"Probability of complete: {prob:.4f}")
+    print(f"Inference time: {dt_ms:.2f} ms")
 
 
 if __name__ == "__main__":
