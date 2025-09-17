@@ -152,13 +152,13 @@ def record_and_predict():
                 if trailing_silence >= stop_chunks or since_trigger_chunks >= max_chunks:
                     # Pause capture while we process
                     stream.stop_stream()
-                    _process_segment(np.concatenate(segment, dtype=np.float32))
-                    # Reset for next segment
-                    segment.clear()
+                    if _process_segment(np.concatenate(segment, dtype=np.float32)):
+                        # Reset for next segment
+                        segment.clear()
+                        trailing_silence = 0
+                        since_trigger_chunks = 0
+                        pre_buffer.clear()
                     speech_active = False
-                    trailing_silence = 0
-                    since_trigger_chunks = 0
-                    pre_buffer.clear()
                     stream.start_stream()
                     print("Listening for speech...")
 
@@ -173,7 +173,7 @@ def record_and_predict():
 def _process_segment(segment_audio_f32: np.ndarray):
     if segment_audio_f32.size == 0:
         print("Captured empty audio segment, skipping prediction.")
-        return
+        return 0
 
     if DEBUG_SAVE_WAV:
         wavfile.write(TEMP_OUTPUT_WAV, RATE, (segment_audio_f32 * 32767.0).astype(np.int16))
@@ -192,6 +192,7 @@ def _process_segment(segment_audio_f32: np.ndarray):
     print(f"Prediction: {'Complete' if pred == 1 else 'Incomplete'}")
     print(f"Probability of complete: {prob:.4f}")
     print(f"Inference time: {dt_ms:.2f} ms")
+    return pred
 
 
 if __name__ == "__main__":
