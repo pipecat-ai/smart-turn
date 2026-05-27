@@ -1,0 +1,95 @@
+[build-system]
+requires = ["setuptools>=77.0.3", "wheel"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "smart-turn"
+version = "3.2.0"
+description = "Native audio turn detection model training and inference utilities."
+readme = "README.md"
+requires-python = ">=3.10"
+license = "BSD-2-Clause"
+license-files = ["LICENSE"]
+authors = [
+    { name = "Daily" },
+]
+keywords = ["audio", "endpointing", "turn-detection", "voice-ai"]
+classifiers = [
+    "Development Status :: 4 - Beta",
+    "Intended Audience :: Developers",
+    "Programming Language :: Python :: 3",
+    "Programming Language :: Python :: 3.10",
+    "Programming Language :: Python :: 3.11",
+    "Programming Language :: Python :: 3.12",
+    "Topic :: Multimedia :: Sound/Audio :: Analysis",
+]
+dependencies = [
+    "numpy",
+]
+
+[project.optional-dependencies]
+inference = [
+    "onnxruntime",
+    "transformers",
+]
+examples = [
+    "librosa",
+    "pyaudio",
+    "scipy",
+    "soundfile",
+]
+training = [
+    "datasets==4.4.1",
+    "librosa",
+    "numpy==2.3.4",
+    "onnx==1.19.1",
+    "onnxruntime==1.23.2",
+    "onnxscript==0.5.6",
+    "scikit-learn==1.6.1",
+    "soundfile",
+    "torch==2.9.0",
+    "torchaudio==2.9.0",
+    "torchcodec==0.8.1",
+    "transformers[torch]==4.48.2",
+    "wandb",
+]
+gpu = [
+    "onnxruntime-gpu==1.23.2; platform_machine == 'x86_64' and platform_system == 'Linux'",
+]
+modal = [
+    "modal",
+]
+all = [
+    "datasets==4.4.1",
+    "librosa",
+    "modal",
+    "numpy==2.3.4",
+    "onnx==1.19.1",
+    "onnxruntime==1.23.2",
+    "onnxruntime-gpu==1.23.2; platform_machine == 'x86_64' and platform_system == 'Linux'",
+    "onnxscript==0.5.6",
+    "pyaudio",
+    "scikit-learn==1.6.1",
+    "scipy",
+    "soundfile",
+    "torch==2.9.0",
+    "torchaudio==2.9.0",
+    "torchcodec==0.8.1",
+    "transformers[torch]==4.48.2",
+    "wandb",
+]
+
+[project.scripts]
+smart-turn-predict = "smart_turn.cli.predict:main"
+smart-turn-record-and-predict = "smart_turn.cli.record_and_predict:main"
+smart-turn-train-local = "smart_turn.cli.train_local:main"
+
+[project.urls]
+Homepage = "https://github.com/pipecat-ai/smart-turn"
+Repository = "https://github.com/pipecat-ai/smart-turn"
+
+[tool.setuptools.packages.find]
+include = ["smart_turn*"]
+
+[tool.setuptools.package-data]
+smart_turn = ["py.typed"]

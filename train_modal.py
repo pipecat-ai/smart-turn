@@ -4,8 +4,7 @@ os.environ["OMP_NUM_THREADS"] = '1'
 os.environ["OMP_WAIT_POLICY"] = "PASSIVE"
 
 import glob
-from datetime import datetime
-from typing import Optional, List
+from typing import Optional
 
 import modal
 
@@ -30,10 +29,7 @@ image = (
         "onnxruntime-gpu==1.23.2",
         "onnxscript==0.5.6",
     )
-    .add_local_python_source("logger")
-    .add_local_python_source("train")
-    .add_local_python_source("benchmark")
-    .add_local_python_source("audio_utils")
+    .add_local_python_source("smart_turn")
 )
 
 
@@ -47,7 +43,7 @@ image = (
     secrets=[modal.Secret.from_name("wandb-secret")],
 )
 def training_run(run_name: str):
-    import train
+    from smart_turn import train
     return train.do_training_run(run_name=run_name, output_dir="/data/output")
 
 
@@ -60,7 +56,7 @@ def training_run(run_name: str):
     secrets=[modal.Secret.from_name("wandb-secret")],
 )
 def quantization_run(fp32_model_path: str):
-    import train
+    from smart_turn import train
     return train.do_quantization_run(
         fp32_model_path=fp32_model_path,
     )
@@ -75,8 +71,8 @@ def quantization_run(fp32_model_path: str):
     timeout=86400,
     secrets=[modal.Secret.from_name("wandb-secret")],
 )
-def benchmark_run(model_root: List[str]):
-    import train
+def benchmark_run(model_root: str):
+    from smart_turn import train
     model_paths = glob.glob(f"{model_root}/*.onnx")
     return train.do_benchmark_run(model_paths=model_paths)
 

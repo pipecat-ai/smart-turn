@@ -2,6 +2,7 @@ import os
 import time
 import math
 import urllib.request
+import argparse
 from collections import deque
 
 import numpy as np
@@ -9,7 +10,7 @@ import pyaudio
 from scipy.io import wavfile
 import onnxruntime as ort
 
-from inference import predict_endpoint  # assumes 16 kHz mono float32 input
+from smart_turn.inference import DEFAULT_ONNX_MODEL_PATH, predict_endpoint  # assumes 16 kHz mono float32 input
 
 # --- Configuration (fixed 16 kHz mono, 512-sample chunks) ---
 RATE = 16000
@@ -91,7 +92,7 @@ def ensure_model(path: str = ONNX_MODEL_PATH, url: str = ONNX_MODEL_URL) -> str:
     return path
 
 
-def record_and_predict():
+def record_and_predict(model_path: str = DEFAULT_ONNX_MODEL_PATH):
     # Derived chunk counts (avoid timestamp tracking)
     chunk_ms = (CHUNK / RATE) * 1000.0
     pre_chunks = math.ceil(PRE_SPEECH_MS / chunk_ms)
@@ -152,7 +153,7 @@ def record_and_predict():
                 if trailing_silence >= stop_chunks or since_trigger_chunks >= max_chunks:
                     # Pause capture while we process
                     stream.stop_stream()
-                    _process_segment(np.concatenate(segment, dtype=np.float32))
+                    _process_segment(np.concatenate(segment, dtype=np.float32), model_path=model_path)
                     # Reset for next segment
                     segment.clear()
                     speech_active = False
@@ -170,7 +171,7 @@ def record_and_predict():
         pa.terminate()
 
 
-def _process_segment(segment_audio_f32: np.ndarray):
+def _process_segment(segment_audio_f32: np.ndarray, model_path: str = DEFAULT_ONNX_MODEL_PATH):
     if segment_audio_f32.size == 0:
         print("Captured empty audio segment, skipping prediction.")
         return
@@ -182,7 +183,7 @@ def _process_segment(segment_audio_f32: np.ndarray):
     print(f"Processing segment ({dur_sec:.2f}s)...")
 
     t0 = time.perf_counter()
-    result = predict_endpoint(segment_audio_f32)  # expects 16 kHz float32 mono
+    result = predict_endpoint(segment_audio_f32, onnx_path=model_path)  # expects 16 kHz float32 mono
     dt_ms = (time.perf_counter() - t0) * 1000.0
 
     pred = result.get("prediction", 0)
@@ -194,5 +195,16 @@ def _process_segment(segment_audio_f32: np.ndarray):
     print(f"Inference time: {dt_ms:.2f} ms")
 
 
+def main():
+    parser = argparse.ArgumentParser(description="Record microphone audio and run Smart Turn prediction.")
+    parser.add_argument(
+        "--model",
+        default=DEFAULT_ONNX_MODEL_PATH,
+        help="Path to the Smart Turn ONNX model",
+    )
+    args = parser.parse_args()
+    record_and_predict(model_path=args.model)
+
+
 if __name__ == "__main__":
-    record_and_predict()
+    main()
