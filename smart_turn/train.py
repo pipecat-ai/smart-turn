@@ -1,5 +1,6 @@
 import os
 from dataclasses import dataclass
+from pathlib import Path
 from typing import List, Dict, Union
 
 import numpy as np
@@ -46,6 +47,9 @@ CONFIG = {
 
     "onnx_opset_version": 18,
     "calibration_dataset_size": 1024,
+
+    "freeze_encoder_layers": 0,
+    "load_best_model_at_end": False,
 }
 
 
@@ -315,6 +319,8 @@ def quantize_onnx_model(
 
 def load_dataset_at(path: str):
     if path.startswith('/'):
+        if (Path(path) / "metadata.jsonl").exists():
+            return load_dataset("audiofolder", data_dir=path)["train"]
         return load_from_disk(path)["train"]
     else:
         return load_dataset(path)["train"]
@@ -412,8 +418,6 @@ def prepare_datasets_ondemand(feature_extractor, config):
         test_dataset = load_dataset_at(dataset_path)
         test_splits[dataset_name] = test_dataset
 
-    merged_test_dataset = concatenate_datasets(test_splits.values()).shuffle(seed=42)
-
     log.info("Wrapping datasets with OnDemandWhisperDataset...")
     wrapped_training = OnDemandSmartTurnDataset(merged_training_dataset, feature_extractor)
     wrapped_eval = OnDemandSmartTurnDataset(merged_eval_dataset, feature_extractor)
@@ -421,7 +425,13 @@ def prepare_datasets_ondemand(feature_extractor, config):
         name: OnDemandSmartTurnDataset(dataset, feature_extractor)
         for name, dataset in test_splits.items()
     }
-    wrapped_test_merged = OnDemandSmartTurnDataset(merged_test_dataset, feature_extractor)
+    wrapped_test_merged = (
+        OnDemandSmartTurnDataset(
+            concatenate_datasets(list(test_splits.values())).shuffle(seed=42),
+            feature_extractor
+        )
+        if test_splits else None
+    )
 
     return {
         "training": wrapped_training,
@@ -684,6 +694,14 @@ def do_training_run(run_name: str, output_dir: str = "./output"):
     model = SmartTurnV3Model.from_pretrained(CONFIG["base_model_name"], num_labels=1, ignore_mismatched_sizes=True)
     feature_extractor = WhisperFeatureExtractor(chunk_length=8) # 8 seconds
 
+    freeze_encoder_layers = CONFIG.get("freeze_encoder_layers", 0)
+    if freeze_encoder_layers > 0:
+        for i, layer in enumerate(model.encoder.layers):
+            if i < freeze_encoder_layers:
+                for param in layer.parameters():
+                    param.requires_grad = False
+        log.info(f"Froze first {freeze_encoder_layers} encoder transformer layers")
+
     log_model_structure(model, CONFIG)
 
     datasets = prepare_datasets_ondemand(feature_extractor, CONFIG)
@@ -698,7 +716,7 @@ def do_training_run(run_name: str, output_dir: str = "./output"):
         eval_steps=CONFIG["eval_steps"],
         save_steps=CONFIG["save_steps"],
         logging_steps=CONFIG["logging_steps"],
-        load_best_model_at_end=False,
+        load_best_model_at_end=CONFIG.get("load_best_model_at_end", False),
         metric_for_best_model="f1",
         greater_is_better=True,
         learning_rate=CONFIG["learning_rate"],
@@ -733,10 +751,11 @@ def do_training_run(run_name: str, output_dir: str = "./output"):
         ]
     )
 
-    trainer.add_callback(ExternalEvaluationCallback(
-        test_datasets=datasets["test"],
-        trainer=trainer
-    ))
+    if datasets["test"]:
+        trainer.add_callback(ExternalEvaluationCallback(
+            test_datasets=datasets["test"],
+            trainer=trainer
+        ))
 
     log.info("Starting training...")
     trainer.train()
@@ -791,6 +810,8 @@ def do_benchmark_run(model_paths: List[str]):
     feature_extractor = WhisperFeatureExtractor(chunk_length=8)  # 8 seconds
 
     dataset = prepare_datasets_ondemand(feature_extractor, CONFIG)["test_merged"]
+    if dataset is None:
+        raise ValueError("At least one test dataset is required for benchmarking")
 
     for model_path in model_paths:
         model_name = os.path.basename(model_path).replace(".onnx", "")

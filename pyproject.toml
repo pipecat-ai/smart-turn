@@ -29,11 +29,16 @@ dependencies = [
 
 [project.optional-dependencies]
 inference = [
+    "librosa",
     "onnxruntime",
     "transformers",
 ]
-examples = [
+inference-gpu = [
     "librosa",
+    "onnxruntime-gpu==1.23.2; platform_machine == 'x86_64' and platform_system == 'Linux'",
+    "transformers",
+]
+examples = [
     "pyaudio",
     "scipy",
     "soundfile",
@@ -53,8 +58,20 @@ training = [
     "transformers[torch]==4.48.2",
     "wandb",
 ]
-gpu = [
+training-gpu = [
+    "datasets==4.4.1",
+    "librosa",
+    "numpy==2.3.4",
+    "onnx==1.19.1",
     "onnxruntime-gpu==1.23.2; platform_machine == 'x86_64' and platform_system == 'Linux'",
+    "onnxscript==0.5.6",
+    "scikit-learn==1.6.1",
+    "soundfile",
+    "torch==2.9.0",
+    "torchaudio==2.9.0",
+    "torchcodec==0.8.1",
+    "transformers[torch]==4.48.2",
+    "wandb",
 ]
 modal = [
     "modal",
@@ -66,6 +83,23 @@ all = [
     "numpy==2.3.4",
     "onnx==1.19.1",
     "onnxruntime==1.23.2",
+    "onnxscript==0.5.6",
+    "pyaudio",
+    "scikit-learn==1.6.1",
+    "scipy",
+    "soundfile",
+    "torch==2.9.0",
+    "torchaudio==2.9.0",
+    "torchcodec==0.8.1",
+    "transformers[torch]==4.48.2",
+    "wandb",
+]
+all-gpu = [
+    "datasets==4.4.1",
+    "librosa",
+    "modal",
+    "numpy==2.3.4",
+    "onnx==1.19.1",
     "onnxruntime-gpu==1.23.2; platform_machine == 'x86_64' and platform_system == 'Linux'",
     "onnxscript==0.5.6",
     "pyaudio",

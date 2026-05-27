@@ -38,6 +38,9 @@ pip install -e ".[inference,examples]"
 For training dependencies, install `pip install -e ".[training]"`. For Modal entrypoints, also install
 `pip install -e ".[modal]"`.
 
+For Linux x86_64 GPU inference, install `pip install -e ".[inference-gpu,examples]"` instead of the
+CPU inference extra. For Linux x86_64 GPU training dependencies, install `pip install -e ".[training-gpu]"`.
+
 You may need to install PortAudio development libraries if not already installed as those are required for PyAudio:
 
 **Ubuntu/Debian**
@@ -89,6 +92,8 @@ Install Smart Turn as a package and invoke `predict_endpoint()` with 16kHz mono 
 ```bash
 pip install "smart-turn[inference] @ git+https://github.com/pipecat-ai/smart-turn.git"
 ```
+
+For Linux x86_64 GPU inference, install `smart-turn[inference-gpu]` instead.
 
 ```python
 from smart_turn.inference import predict_endpoint
