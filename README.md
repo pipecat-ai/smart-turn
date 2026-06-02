@@ -32,8 +32,14 @@ This is a truly open model (BSD 2-clause license). Anyone can use, fork, and con
 ```
 python3.12 -m venv venv
 source venv/bin/activate
-pip install -r requirements.txt
+pip install -e ".[inference,examples]"
 ```
+
+For training dependencies, install `pip install -e ".[training]"`. For Modal entrypoints, also install
+`pip install -e ".[modal]"`.
+
+For Linux x86_64 GPU inference, install `pip install -e ".[inference-gpu,examples]"` instead of the
+CPU inference extra. For Linux x86_64 GPU training dependencies, install `pip install -e ".[training-gpu]"`.
 
 You may need to install PortAudio development libraries if not already installed as those are required for PyAudio:
 
@@ -64,7 +70,7 @@ Run a command-line utility that streams audio from the system microphone, detect
 #   - "I can't seem to, um ..."
 #   - "I can't seem to, um, find the return label."
 
-python record_and_predict.py
+smart-turn-record-and-predict --model /path/to/smart-turn-v3.1.onnx
 ```
 
 ## Model usage
@@ -81,9 +87,25 @@ Smart Turn v3 has been extensively tested on [Pipecat Cloud](https://www.daily.c
 
 ### With local inference
 
-From the Smart Turn source repository, obtain the files `model.py` and `inference.py`. Import these files into your project and invoke the `predict_endpoint()` function with your audio. For an example, please see `predict.py`:
+Install Smart Turn as a package and invoke `predict_endpoint()` with 16kHz mono audio:
 
-https://github.com/pipecat-ai/smart-turn/blob/main/predict.py
+```bash
+pip install "smart-turn[inference] @ git+https://github.com/pipecat-ai/smart-turn.git"
+```
+
+For Linux x86_64 GPU inference, install `smart-turn[inference-gpu]` instead.
+
+```python
+from smart_turn.inference import predict_endpoint
+
+result = predict_endpoint(audio_array, onnx_path="/path/to/smart-turn-v3.1.onnx")
+```
+
+For a command-line example, run:
+
+```bash
+smart-turn-predict /path/to/audio.wav --model /path/to/smart-turn-v3.1.onnx
+```
 
 ### Notes on input format
 
@@ -122,15 +144,33 @@ We have experimented with multiple architectures and base models, including wav2
 
 ## Inference
 
-Sample code for inference is included in `inference.py`. See `predict.py` and `record_and_predict.py` for usage examples.
+Sample code for inference is included in `smart_turn/inference.py`. See the `smart-turn-predict` and
+`smart-turn-record-and-predict` commands for usage examples.
 
 ## Training
 
-All training code is defined in `train.py`.
+Training code is available from the `smart_turn.train` package module.
 
 The training code will download datasets from the [pipecat-ai](https://huggingface.co/pipecat-ai) HuggingFace repository. (But of course you can modify it to use your own datasets.)
 
 You can run training locally or using [Modal](https://modal.com) (using `train_modal.py`). Training runs are logged to [Weights & Biases](https://www.wandb.ai) unless you disable logging.
+
+```bash
+# Install training dependencies from a source checkout.
+pip install -e ".[training]"
+
+# Or depend on this repo from another project.
+pip install "smart-turn[training] @ git+https://github.com/pipecat-ai/smart-turn.git"
+```
+
+```python
+from smart_turn.train import CONFIG, do_training_run
+
+CONFIG["datasets_training"] = ["/path/to/local/train_dataset"]
+CONFIG["datasets_test"] = ["/path/to/local/test_dataset"]
+
+model_path = do_training_run(run_name="my-smart-turn-run", output_dir="./output")
+```
 
 ```
 # To run a training job on Modal, run:

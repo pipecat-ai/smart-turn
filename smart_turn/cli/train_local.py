@@ -11,23 +11,26 @@ os.environ["OMP_WAIT_POLICY"] = "PASSIVE"
 
 import argparse
 import glob
-from typing import Optional, List
-
-import train
 
 
 def training_run(run_name: str, output_dir: str = "./output"):
     """Run the training locally."""
+    from smart_turn import train
+
     return train.do_training_run(run_name=run_name, output_dir=output_dir)
 
 
 def quantization_run(fp32_model_path: str):
     """Run quantization locally."""
+    from smart_turn import train
+
     return train.do_quantization_run(fp32_model_path=fp32_model_path)
 
 
 def benchmark_run(model_root: str):
     """Run benchmarking locally."""
+    from smart_turn import train
+
     model_paths = glob.glob(f"{model_root}/*.onnx")
     return train.do_benchmark_run(model_paths=model_paths)
 

@@ -1,21 +1,25 @@
+import argparse
+
 import librosa
-import sys
 import numpy as np
 
-from inference import predict_endpoint
+from smart_turn.inference import DEFAULT_ONNX_MODEL_PATH, predict_endpoint
 
 
 def main():
-    if len(sys.argv) > 1:
-        file_path = sys.argv[1]
-    else:
-        print("Usage: python predict.py <path_to_file>")
-        sys.exit(1)
+    parser = argparse.ArgumentParser(description="Run Smart Turn endpoint prediction on an audio file.")
+    parser.add_argument("file_path", help="Path to an audio file")
+    parser.add_argument(
+        "--model",
+        default=DEFAULT_ONNX_MODEL_PATH,
+        help="Path to the Smart Turn ONNX model",
+    )
+    args = parser.parse_args()
 
     try:
-        print(f"Loading audio file: {file_path}")
+        print(f"Loading audio file: {args.file_path}")
         # Load the audio file with original sample rate
-        audio, sr = librosa.load(file_path, sr=None, mono=True)
+        audio, sr = librosa.load(args.file_path, sr=None, mono=True)
 
         print(f"Loaded audio with sample rate: {sr} Hz, duration: {len(audio) / sr:.2f} seconds")
 
@@ -34,7 +38,7 @@ def main():
 
         # Call the prediction function with both audio and sample rate
         print("Running endpoint prediction...")
-        result = predict_endpoint(audio)
+        result = predict_endpoint(audio, onnx_path=args.model)
 
         # Display results
         print("\nResults:")
@@ -43,7 +47,7 @@ def main():
 
     except Exception as e:
         print(f"Error processing audio file: {e}")
-        sys.exit(1)
+        raise SystemExit(1)
 
 
 if __name__ == "__main__":

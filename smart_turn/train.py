@@ -1,5 +1,6 @@
 import os
 from dataclasses import dataclass
+from pathlib import Path
 from typing import List, Dict, Union
 
 import numpy as np
@@ -10,7 +11,6 @@ from onnxruntime.quantization import quantize_static, CalibrationDataReader, Qua
     QuantFormat, CalibrationMethod
 from sklearn.metrics import accuracy_score, precision_score, recall_score, f1_score, confusion_matrix
 from torch import nn
-from torch.export import Dim
 from torch.nn.functional import softmax
 from torch.utils.data import Dataset
 from transformers import WhisperFeatureExtractor, WhisperPreTrainedModel, WhisperConfig
@@ -22,10 +22,10 @@ from transformers.trainer_callback import TrainerCallback
 from transformers.trainer_utils import IntervalStrategy
 from transformers.training_args import TrainingArguments
 
-from audio_utils import truncate_audio_to_last_n_seconds
-from benchmark import benchmark
+from .audio_utils import truncate_audio_to_last_n_seconds
+from .benchmark import benchmark
 from datasets import load_dataset, concatenate_datasets, load_from_disk
-from logger import log, log_model_structure, log_dataset_statistics, log_dependencies, log_device_info, ProgressLoggerCallback
+from .logger import log, log_model_structure, log_dataset_statistics, log_dependencies, log_device_info, ProgressLoggerCallback
 
 CONFIG = {
     "base_model_name": "openai/whisper-tiny",
@@ -44,8 +44,11 @@ CONFIG = {
     "save_steps": 500,
     "logging_steps": 100,
 
-    "onnx_opset_version": 18,
+    "onnx_opset_version": 20,
     "calibration_dataset_size": 1024,
+
+    "freeze_encoder_layers": 0,
+    "load_best_model_at_end": False,
 }
 
 
@@ -220,10 +223,6 @@ def export_to_onnx_fp32(model, output_path, config):
             assert test_output_1.shape == (1, 1), f"Expected (1, 1), got {test_output_1.shape}"
             assert test_output_2.shape == (2, 1), f"Expected (2, 1), got {test_output_2.shape}"
 
-        dynamic_shapes = {
-            'input_features': {0: Dim.DYNAMIC},
-        }
-
         torch.onnx.export(
             model=export_model,
             args=(example_input_b2,),
@@ -233,9 +232,12 @@ def export_to_onnx_fp32(model, output_path, config):
             do_constant_folding=False,
             input_names=['input_features'],
             output_names=['logits'],
-            dynamic_shapes=dynamic_shapes,
+            dynamic_axes={
+                'input_features': {0: 'batch_size'},
+                'logits': {0: 'batch_size'},
+            },
             verbose=False,
-            external_data=False,
+            dynamo=False,
         )
 
         onnx_model = onnx.load(output_path)
@@ -315,6 +317,8 @@ def quantize_onnx_model(
 
 def load_dataset_at(path: str):
     if path.startswith('/'):
+        if (Path(path) / "metadata.jsonl").exists():
+            return load_dataset("audiofolder", data_dir=path)["train"]
         return load_from_disk(path)["train"]
     else:
         return load_dataset(path)["train"]
@@ -412,8 +416,6 @@ def prepare_datasets_ondemand(feature_extractor, config):
         test_dataset = load_dataset_at(dataset_path)
         test_splits[dataset_name] = test_dataset
 
-    merged_test_dataset = concatenate_datasets(test_splits.values()).shuffle(seed=42)
-
     log.info("Wrapping datasets with OnDemandWhisperDataset...")
     wrapped_training = OnDemandSmartTurnDataset(merged_training_dataset, feature_extractor)
     wrapped_eval = OnDemandSmartTurnDataset(merged_eval_dataset, feature_extractor)
@@ -421,7 +423,13 @@ def prepare_datasets_ondemand(feature_extractor, config):
         name: OnDemandSmartTurnDataset(dataset, feature_extractor)
         for name, dataset in test_splits.items()
     }
-    wrapped_test_merged = OnDemandSmartTurnDataset(merged_test_dataset, feature_extractor)
+    wrapped_test_merged = (
+        OnDemandSmartTurnDataset(
+            concatenate_datasets(list(test_splits.values())).shuffle(seed=42),
+            feature_extractor
+        )
+        if test_splits else None
+    )
 
     return {
         "training": wrapped_training,
@@ -684,6 +692,14 @@ def do_training_run(run_name: str, output_dir: str = "./output"):
     model = SmartTurnV3Model.from_pretrained(CONFIG["base_model_name"], num_labels=1, ignore_mismatched_sizes=True)
     feature_extractor = WhisperFeatureExtractor(chunk_length=8) # 8 seconds
 
+    freeze_encoder_layers = CONFIG.get("freeze_encoder_layers", 0)
+    if freeze_encoder_layers > 0:
+        for i, layer in enumerate(model.encoder.layers):
+            if i < freeze_encoder_layers:
+                for param in layer.parameters():
+                    param.requires_grad = False
+        log.info(f"Froze first {freeze_encoder_layers} encoder transformer layers")
+
     log_model_structure(model, CONFIG)
 
     datasets = prepare_datasets_ondemand(feature_extractor, CONFIG)
@@ -698,7 +714,7 @@ def do_training_run(run_name: str, output_dir: str = "./output"):
         eval_steps=CONFIG["eval_steps"],
         save_steps=CONFIG["save_steps"],
         logging_steps=CONFIG["logging_steps"],
-        load_best_model_at_end=False,
+        load_best_model_at_end=CONFIG.get("load_best_model_at_end", False),
         metric_for_best_model="f1",
         greater_is_better=True,
         learning_rate=CONFIG["learning_rate"],
@@ -733,10 +749,11 @@ def do_training_run(run_name: str, output_dir: str = "./output"):
         ]
     )
 
-    trainer.add_callback(ExternalEvaluationCallback(
-        test_datasets=datasets["test"],
-        trainer=trainer
-    ))
+    if datasets["test"]:
+        trainer.add_callback(ExternalEvaluationCallback(
+            test_datasets=datasets["test"],
+            trainer=trainer
+        ))
 
     log.info("Starting training...")
     trainer.train()
@@ -791,6 +808,8 @@ def do_benchmark_run(model_paths: List[str]):
     feature_extractor = WhisperFeatureExtractor(chunk_length=8)  # 8 seconds
 
     dataset = prepare_datasets_ondemand(feature_extractor, CONFIG)["test_merged"]
+    if dataset is None:
+        raise ValueError("At least one test dataset is required for benchmarking")
 
     for model_path in model_paths:
         model_name = os.path.basename(model_path).replace(".onnx", "")

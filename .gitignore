@@ -1,6 +1,8 @@
 .idea
 venv
 __pycache__
+build/
+*.egg-info/
 .torch_hub
 model-v1
 temp_output.wav
