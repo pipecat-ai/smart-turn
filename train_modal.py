@@ -32,6 +32,7 @@ image = (
     )
     .add_local_python_source("logger")
     .add_local_python_source("train")
+    .add_local_python_source("modal_metrics")
     .add_local_python_source("benchmark")
     .add_local_python_source("audio_utils")
 )

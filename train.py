@@ -22,6 +22,7 @@ from transformers.trainer_callback import TrainerCallback
 from transformers.trainer_utils import IntervalStrategy
 from transformers.training_args import TrainingArguments
 
+import modal_metrics
 from audio_utils import truncate_audio_to_last_n_seconds
 from benchmark import benchmark
 from datasets import load_dataset, concatenate_datasets, load_from_disk
@@ -30,8 +31,8 @@ from logger import log, log_model_structure, log_dataset_statistics, log_depende
 CONFIG = {
     "base_model_name": "openai/whisper-tiny",
 
-    "datasets_training": ["pipecat-ai/smart-turn-data-v3.2-train"],
-    "datasets_test": ["pipecat-ai/smart-turn-data-v3.2-test"],
+    "datasets_training": ["/data/datasets/smart-turn-v3.3-alpha1-classification-train"],
+    "datasets_test": ["/data/datasets/smart-turn-v3.3-alpha1-classification-test-public"],
 
     "learning_rate": 5e-5,
     "num_epochs": 4,
@@ -496,6 +497,7 @@ class ExternalEvaluationCallback(TrainerCallback):
             accuracies[dataset_name] = metrics["accuracy"]
 
             wandb.log(external_metrics)
+            modal_metrics.publish(external_metrics)
 
             self._process_category_metrics(dataset, probs, labels, preds, language_metrics,
                                            column_name='language', default_value='unknown-error')
@@ -515,6 +517,12 @@ class ExternalEvaluationCallback(TrainerCallback):
             wandb.log({
                 "exttest/lowest_accuracy": lowest_accuracy,
                 "exttest/lowest_accuracy_dataset": lowest_accuracy_dataset,
+                "exttest/mean_accuracy": mean_accuracy,
+                "exttest/accuracy_variance": np.var(accuracy_values),
+                "train/global_step": state.global_step
+            })
+            modal_metrics.publish({
+                "exttest/lowest_accuracy": lowest_accuracy,
                 "exttest/mean_accuracy": mean_accuracy,
                 "exttest/accuracy_variance": np.var(accuracy_values),
                 "train/global_step": state.global_step
@@ -575,6 +583,7 @@ class ExternalEvaluationCallback(TrainerCallback):
             category_accuracies[category] = metrics["accuracy"]
 
             wandb.log(category_specific_metrics)
+            modal_metrics.publish(category_specific_metrics)
 
             log.info(f"{metric_prefix.capitalize()} {category} metrics: accuracy={metrics['accuracy']:.4f}, "
                      f"precision={metrics['precision']:.4f}, recall={metrics['recall']:.4f}, "
@@ -603,6 +612,7 @@ class ExternalEvaluationCallback(TrainerCallback):
                 summary_metrics[f"exttest/{metric_prefix}_accuracy_std"] = np.std(list(category_accuracies.values()))
 
             wandb.log(summary_metrics)
+            modal_metrics.publish(summary_metrics)
 
             category_type = metric_prefix.replace('_', ' ')
             log.info(f"{category_type.capitalize()} performance summary:")
@@ -621,6 +631,7 @@ class ExternalEvaluationCallback(TrainerCallback):
             }
             distribution_metrics["train/global_step"] = global_step
             wandb.log(distribution_metrics)
+            modal_metrics.publish(distribution_metrics)
 
 
 def compute_metrics(eval_pred):
@@ -658,6 +669,7 @@ def final_evaluate(trainer, dataset, split_name):
     }
 
     wandb.log(wandb_metrics)
+    modal_metrics.publish(wandb_metrics)
 
     return metrics, predictions
 
@@ -680,6 +692,8 @@ def do_training_run(run_name: str, output_dir: str = "./output"):
     )
 
     wandb_run.define_metric(name="exttest/*", step_metric="train/global_step")
+
+    modal_metrics.init(run_name, CONFIG)
 
     model = SmartTurnV3Model.from_pretrained(CONFIG["base_model_name"], num_labels=1, ignore_mismatched_sizes=True)
     feature_extractor = WhisperFeatureExtractor(chunk_length=8) # 8 seconds
@@ -729,7 +743,8 @@ def do_training_run(run_name: str, output_dir: str = "./output"):
         compute_metrics=compute_metrics,
         data_collator=SmartTurnDataCollator(),
         callbacks=[
-            ProgressLoggerCallback(log_interval=CONFIG["logging_steps"])
+            ProgressLoggerCallback(log_interval=CONFIG["logging_steps"]),
+            modal_metrics.MetricsPublisherCallback(),
         ]
     )
 
@@ -759,6 +774,7 @@ def do_training_run(run_name: str, output_dir: str = "./output"):
     log.info(f"Training and export completed. Models saved to: {final_save_path}")
 
     wandb.finish()
+    modal_metrics.finish()
 
     return onnx_fp32_model_path
 
