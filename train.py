@@ -22,7 +22,7 @@ from transformers.trainer_callback import TrainerCallback
 from transformers.trainer_utils import IntervalStrategy
 from transformers.training_args import TrainingArguments
 
-from audio_utils import truncate_audio_to_last_n_seconds
+from audio_utils import truncate_audio_to_last_n_seconds, simulate_telephony, TELEPHONY_CHANNELS
 from benchmark import benchmark
 from datasets import load_dataset, concatenate_datasets, load_from_disk
 from logger import log, log_model_structure, log_dataset_statistics, log_dependencies, log_device_info, ProgressLoggerCallback
@@ -43,6 +43,10 @@ CONFIG = {
     "eval_steps": 500,
     "save_steps": 500,
     "logging_steps": 100,
+
+    # Probability of each channel for training clips only; eval and test audio is untouched.
+    # e.g. {"wideband": 1/3, "narrowband": 1/3, "pstn": 1/3} to train for phone calls (#42).
+    "telephony_augmentation": None,
 
     "onnx_opset_version": 18,
     "calibration_dataset_size": 1024,
@@ -321,9 +325,13 @@ def load_dataset_at(path: str):
 
 
 class OnDemandSmartTurnDataset(Dataset):
-    def __init__(self, hf_dataset, feature_extractor):
+    def __init__(self, hf_dataset, feature_extractor, channel_probs=None):
         self.dataset = hf_dataset
         self.feature_extractor = feature_extractor
+        self.channel_probs = None
+        if channel_probs:
+            weights = np.array([channel_probs.get(c, 0.0) for c in TELEPHONY_CHANNELS], dtype=np.float64)
+            self.channel_probs = weights / weights.sum()
 
     def __len__(self):
         return len(self.dataset)
@@ -334,6 +342,10 @@ class OnDemandSmartTurnDataset(Dataset):
         audio_array = sample["audio"]["array"]
 
         audio_array = truncate_audio_to_last_n_seconds(audio_array, n_seconds=8)
+
+        if self.channel_probs is not None:
+            channel = np.random.choice(TELEPHONY_CHANNELS, p=self.channel_probs)
+            audio_array = simulate_telephony(audio_array, channel)
 
         label = 1 if sample["endpoint_bool"] else 0
 
@@ -415,7 +427,9 @@ def prepare_datasets_ondemand(feature_extractor, config):
     merged_test_dataset = concatenate_datasets(test_splits.values()).shuffle(seed=42)
 
     log.info("Wrapping datasets with OnDemandWhisperDataset...")
-    wrapped_training = OnDemandSmartTurnDataset(merged_training_dataset, feature_extractor)
+    wrapped_training = OnDemandSmartTurnDataset(
+        merged_training_dataset, feature_extractor, channel_probs=config.get("telephony_augmentation")
+    )
     wrapped_eval = OnDemandSmartTurnDataset(merged_eval_dataset, feature_extractor)
     wrapped_test_splits = {
         name: OnDemandSmartTurnDataset(dataset, feature_extractor)
