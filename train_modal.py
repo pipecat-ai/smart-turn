@@ -29,6 +29,12 @@ image = (
         "onnx==1.19.1",
         "onnxruntime-gpu==1.23.2",
         "onnxscript==0.5.6",
+        # onnx_ir's inliner regressed after 0.1.13 (Dec 2025); 0.1.14+ leaves
+        # functions un-inlined, tripping onnxscript 0.5.6's version-converter guard.
+        # Pin to the last-known-good Dec 2025 release. ml-dtypes pinned alongside
+        # for reproducibility (it's onnxscript's other unpinned dep).
+        "onnx_ir==0.1.13",
+        "ml-dtypes==0.5.4",
     )
     .add_local_python_source("logger")
     .add_local_python_source("train")
@@ -76,9 +82,12 @@ def quantization_run(fp32_model_path: str):
     timeout=86400,
     secrets=[modal.Secret.from_name("wandb-secret")],
 )
-def benchmark_run(model_root: List[str]):
+def benchmark_run(model_root: str):
     import train
-    model_paths = glob.glob(f"{model_root}/*.onnx")
+    if model_root.endswith(".onnx"):
+        model_paths = [model_root]
+    else:
+        model_paths = glob.glob(f"{model_root}/*.onnx")
     return train.do_benchmark_run(model_paths=model_paths)
 
 

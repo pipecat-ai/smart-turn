@@ -11,3 +11,5 @@ torchcodec==0.8.1
 onnx==1.19.1
 onnxruntime-gpu==1.23.2
 onnxscript==0.5.6
+onnx_ir==0.1.13
+ml-dtypes==0.5.4
