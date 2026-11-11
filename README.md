@@ -81,7 +81,7 @@ Smart Turn v3 has been extensively tested on [Pipecat Cloud](https://www.daily.c
 
 ### With local inference
 
-From the Smart Turn source repository, obtain the files `model.py` and `inference.py`. Import these files into your project and invoke the `predict_endpoint()` function with your audio. For an example, please see `predict.py`:
+From the Smart Turn source repository, obtain the files `inference.py` and `audio_utils.py`, and download `smart-turn-v3.2-cpu.onnx` (or `smart-turn-v3.2-gpu.onnx`) from the [HuggingFace page](https://huggingface.co/pipecat-ai/smart-turn-v3). Import these files into your project and invoke the `predict_endpoint()` function with your audio. For an example, please see `predict.py`:
 
 https://github.com/pipecat-ai/smart-turn/blob/main/predict.py
 

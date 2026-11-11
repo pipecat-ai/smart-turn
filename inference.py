@@ -4,7 +4,7 @@ from transformers import WhisperFeatureExtractor
 
 from audio_utils import truncate_audio_to_last_n_seconds
 
-ONNX_MODEL_PATH = "smart-turn-v3.1.onnx"
+ONNX_MODEL_PATH = "smart-turn-v3.2-cpu.onnx"
 
 def build_session(onnx_path):
     so = ort.SessionOptions()
