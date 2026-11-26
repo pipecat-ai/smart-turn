@@ -34,7 +34,7 @@ def main():
 
         # Call the prediction function with both audio and sample rate
         print("Running endpoint prediction...")
-        result = predict_endpoint(audio)
+        result = predict_endpoint(audio, sample_rate=16000)
 
         # Display results
         print("\nResults:")
